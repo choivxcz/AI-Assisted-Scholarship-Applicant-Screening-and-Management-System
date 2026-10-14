@@ -341,10 +341,7 @@ class ApplicantRepository:
 
     @staticmethod
     def archive(applicant_id):
-        """
-        Archives the applicant and all associated applications.
-        Both updates commit together or are rolled back together.
-        """
+
         connection = get_connection()
 
         try:

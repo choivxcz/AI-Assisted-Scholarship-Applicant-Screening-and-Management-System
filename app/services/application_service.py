@@ -37,8 +37,7 @@ class ApplicationService:
     ):
         applicant_data = dict(applicant_data)
         application_data = dict(application_data)
-
-        # Validate personal information.
+        
         for field in (
             "first_name", "last_name", "barangay",
             "municipality", "province"
@@ -91,8 +90,6 @@ class ApplicationService:
                 "Missing application field(s): "
                 + ", ".join(sorted(missing))
             )
-
-        # Validate household counts.
         household = int(application_data["household"])
         children = int(application_data["children_count"])
         seniors = int(application_data["senior_count"])
@@ -117,7 +114,6 @@ class ApplicationService:
         application_data["pwd_count"] = pwds
         application_data["dependents_count"] = dependents
 
-        # Calculate MSWDO poverty eligibility.
         threshold = ApplicationService.mswdo_threshold(
             household, children, seniors, pwds
         )
@@ -130,10 +126,8 @@ class ApplicationService:
             income <= threshold
         )
 
-        # Keep dependent Boolean compatible with the old schema.
         application_data["dependent"] = dependents > 0
 
-        # Calculate exam percentage and pass status.
         raw_score = application_data["exam_raw_score"]
         total_items = application_data["exam_total_items"]
 
@@ -168,7 +162,6 @@ class ApplicationService:
                 raw_score >= 0.8 * total_items
             )
 
-        # Validate the application fields supported by the repository.
         application_data = (
             ApplicationRepository._validate_application(
                 application_data
