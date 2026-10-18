@@ -304,11 +304,7 @@ def load_and_train(csv_path=DEFAULT_CSV):
     return model, metrics
 
 def mswd_threshold(household, children, seniors, pwds):
-    """
-    Calculate the household income threshold used by
-    the current screening rules.
-    """
-
+    
     return (
         max(15000, 4000 * household)
         + 2000 * children
@@ -450,6 +446,7 @@ def evaluate_applicant(model, applicant):
 
     if applicant["spes"]:
         reasons.append(
+            
             "Applicant is an SPES beneficiary."
         )
 
@@ -462,8 +459,6 @@ def evaluate_applicant(model, applicant):
         reasons.append(
             "Family already has a scholar."
         )
-
-    # Preserve the existing combined rule/model logic.
     qualified = not reasons and prediction == 1
 
     exam_percentage = (

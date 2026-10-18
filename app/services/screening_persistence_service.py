@@ -15,7 +15,6 @@ from app.services.ml_screening_service import (
 
 
 class ScreeningPersistenceService:
-    """Run ML screening and save its result in MySQL."""
 
     def __init__(self):
         self.model, self.artifact = load_saved_model()
@@ -33,28 +32,11 @@ class ScreeningPersistenceService:
         applicant_data,
         screened_by=None,
     ):
-        """
-        Evaluate an applicant and save the screening result.
-
-        application_id:
-            Existing applications.application_id.
-
-        applicant_data:
-            Dictionary accepted by evaluate_applicant().
-
-        screened_by:
-            Existing users.user_id, or None if staff login
-            has not been implemented.
-        """
 
         result = evaluate_applicant(
             self.model,
             applicant_data,
         )
-
-        # The current ML service returns the probability of
-        # the QUALIFIED class as a percentage. Store it as
-        # a 0-to-1 decimal in confidence_score.
         confidence_score = (
             result["model_probability_percent"] / 100.0
         )
