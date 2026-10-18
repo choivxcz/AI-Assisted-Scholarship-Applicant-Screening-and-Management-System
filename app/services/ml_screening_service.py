@@ -467,9 +467,9 @@ def evaluate_applicant(model, applicant):
 
     return {
         "predicted_class": (
-            "PROCEED_TO_INTERVIEW"
+            "Proceed To Interview"
             if qualified
-            else "NEEDS_OFFICIAL_REVIEW"
+            else "Needs Official Review"
         ),
         "model_prediction": (
             "QUALIFIED"
