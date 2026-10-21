@@ -1,4 +1,3 @@
-
 from app.repositories.applicant_repository import ApplicantRepository
 from app.repositories.application_repository import ApplicationRepository
 from database.connection import get_connection
@@ -6,8 +5,8 @@ from database.connection import get_connection
 
 class ApplicationService:
     ALLOWED_TRANSITIONS = {
-        "DRAFT": {"SUBMITTED", "WITHDRAWN"},
-        "SUBMITTED": {"UNDER_REVIEW", "WITHDRAWN"},
+        "DRAFT": {"SUBMITTED", "FOR_INTERVIEW", "WITHDRAWN"},
+        "SUBMITTED": {"UNDER_REVIEW", "FOR_INTERVIEW", "WITHDRAWN"},
         "UNDER_REVIEW": {
             "FOR_INTERVIEW", "REJECTED", "WAITLISTED", "WITHDRAWN"
         },
@@ -37,26 +36,38 @@ class ApplicationService:
     ):
         applicant_data = dict(applicant_data)
         application_data = dict(application_data)
-        
+
         for field in (
-            "first_name", "last_name", "barangay",
-            "municipality", "province"
+            "first_name",
+            "last_name",
+            "house_no_street",
+            "barangay",
+            "municipality",
+            "province",
         ):
             applicant_data[field] = (
                 ApplicantRepository._validate_required_text(
                     applicant_data.get(field),
-                    field.replace("_", " ").title()
+                    field.replace("_", " ").title(),
                 )
             )
 
+        applicant_data["birth_date"] = (
+            ApplicantRepository._validate_birth_date(
+                applicant_data.get("birth_date")
+            )
+        )
         applicant_data["sex"] = ApplicantRepository._validate_sex(
             applicant_data.get("sex")
         )
+        applicant_data["email"] = ApplicantRepository._validate_email(
+            applicant_data.get("email")
+        )
+        applicant_data["phone"] = ApplicantRepository._validate_phone(
+            applicant_data.get("phone")
+        )
 
-        for field in (
-            "middle_name", "suffix", "email", "phone",
-            "house_no_street"
-        ):
+        for field in ("middle_name", "suffix"):
             value = applicant_data.get(field)
             if isinstance(value, str):
                 applicant_data[field] = value.strip() or None
@@ -90,6 +101,7 @@ class ApplicationService:
                 "Missing application field(s): "
                 + ", ".join(sorted(missing))
             )
+
         household = int(application_data["household"])
         children = int(application_data["children_count"])
         seniors = int(application_data["senior_count"])
@@ -125,64 +137,84 @@ class ApplicationService:
         application_data["mswdo_poverty_eligible"] = (
             income <= threshold
         )
-
         application_data["dependent"] = dependents > 0
 
         raw_score = application_data["exam_raw_score"]
         total_items = application_data["exam_total_items"]
 
-        if raw_score is None and total_items is None:
-            application_data["exam_score"] = None
-            application_data["exam_passed"] = False
-        else:
-            if raw_score is None or total_items is None:
-                raise ValueError(
-                    "Enter both the exam score and total exam items."
-                )
+        if raw_score is None or total_items is None:
+            raise ValueError(
+                "Both raw exam score and total exam items are required."
+            )
 
+        try:
             raw_score = int(raw_score)
             total_items = int(total_items)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                "Exam score and total items must be whole numbers."
+            ) from exc
 
-            if total_items < 1:
-                raise ValueError(
-                    "Total exam items must be at least 1."
-                )
+        if total_items < 1:
+            raise ValueError("Total exam items must be at least 1.")
 
-            if raw_score < 0 or raw_score > total_items:
-                raise ValueError(
-                    "Exam score must be between 0 and total exam items."
-                )
-
-            application_data["exam_raw_score"] = raw_score
-            application_data["exam_total_items"] = total_items
-            application_data["exam_score"] = round(
-                raw_score / total_items * 100, 2
-            )
-            application_data["exam_passed"] = (
-                raw_score >= 0.8 * total_items
+        if raw_score < 0 or raw_score > total_items:
+            raise ValueError(
+                "Exam score must be between 0 and total exam items."
             )
 
-        application_data = (
-            ApplicationRepository._validate_application(
-                application_data
-            )
+        application_data["exam_raw_score"] = raw_score
+        application_data["exam_total_items"] = total_items
+        application_data["exam_score"] = round(
+            raw_score / total_items * 100, 2
+        )
+        application_data["exam_passed"] = (
+            raw_score >= 0.8 * total_items
+        )
+
+        application_data = ApplicationRepository._validate_application(
+            application_data
         )
 
         applicant_columns = [
-            "first_name", "middle_name", "last_name", "suffix",
-            "birth_date", "sex", "email", "phone",
-            "house_no_street", "barangay", "municipality", "province",
+            "first_name",
+            "middle_name",
+            "last_name",
+            "suffix",
+            "birth_date",
+            "sex",
+            "email",
+            "phone",
+            "house_no_street",
+            "barangay",
+            "municipality",
+            "province",
         ]
 
         application_columns = [
-            "scholarship_program", "scholarship_year",
-            "academic_average", "monthly_income",
-            "mswdo_poverty_eligible", "household", "children_count",
-            "senior_count", "pwd_count", "solo_parent", "dependent",
-            "dependents_count", "exam_score", "exam_raw_score",
-            "exam_total_items", "exam_passed", "four_ps_beneficiary",
-            "spes_beneficiary", "scholars_in_family", "residency",
-            "previous_scholarship", "status", "submitted_at",
+            "scholarship_program",
+            "scholarship_year",
+            "academic_average",
+            "monthly_income",
+            "mswdo_poverty_eligible",
+            "household",
+            "children_count",
+            "senior_count",
+            "pwd_count",
+            "solo_parent",
+            "dependent",
+            "dependents_count",
+            "exam_score",
+            "exam_raw_score",
+            "exam_total_items",
+            "exam_passed",
+            "four_ps_beneficiary",
+            "spes_beneficiary",
+            "scholars_in_family",
+            "residency",
+            "previous_scholarship",
+            "status",
+            "submitted_at",
         ]
 
         connection = get_connection()

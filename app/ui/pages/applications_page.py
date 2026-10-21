@@ -20,6 +20,7 @@ from PyQt6.QtWidgets import (
 
 from app.repositories.applicant_repository import ApplicantRepository
 from app.repositories.application_repository import ApplicationRepository
+from app.ui.applicant_details_dialog import show_applicant_details
 
 
 # ---------------------------------------------------------------- palette
@@ -234,6 +235,7 @@ class ApplicationsPageMixin:
         self._applications_stage = 0
         self._applications_year_ready = False
         self._applications_records = []
+        self._applications_page_rows = []
         self._applications_loaded = False
         self._applications_page_index = 0
 
@@ -370,6 +372,9 @@ class ApplicationsPageMixin:
         ])
         self.configure_table(self.applications_table)
         self._style_applications_table()
+        self.applications_table.cellClicked.connect(
+            self._application_cell_clicked
+        )
         self.applications_panel_layout = panel_layout
         panel_layout.addWidget(self.applications_table, 1)
 
@@ -533,6 +538,17 @@ class ApplicationsPageMixin:
         layout.addStretch()
         return holder
 
+    def _application_cell_clicked(self, row, _column):
+        if row < 0 or row >= len(self._applications_page_rows):
+            return
+        applicant_id = self._applications_page_rows[row].get("applicant_id_raw")
+        if applicant_id is None:
+            return
+        try:
+            show_applicant_details(self, int(applicant_id))
+        except Exception as error:
+            self.show_error("Applicant details", error)
+
     def _rebuild_applications_pager(self, current, pages):
         layout = self.applications_pager
         while layout.count():
@@ -622,6 +638,8 @@ class ApplicationsPageMixin:
             for item in applications:
                 applicant_id = item.get("applicant_id")
                 records.append({
+                    "application_id_raw": item.get("application_id"),
+                    "applicant_id_raw": applicant_id,
                     "id": _display_application_id(
                         item.get("application_id")
                     ),
@@ -687,6 +705,7 @@ class ApplicationsPageMixin:
             )
             start = self._applications_page_index * PAGE_SIZE
             page_rows = shown[start:start + PAGE_SIZE]
+            self._applications_page_rows = page_rows
 
             table = self.applications_table
             table.clearSelection()

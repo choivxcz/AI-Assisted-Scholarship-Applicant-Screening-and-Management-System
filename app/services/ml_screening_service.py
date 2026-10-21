@@ -438,7 +438,12 @@ def evaluate_applicant(model, applicant):
     ) * 100
 
     reasons = []
-
+    
+    if not exam_passed:
+        reasons.append(
+        "Exam score is below the required 80% passing rate."
+        )
+    
     if average <= 75:
         reasons.append(
             "Academic average must be greater than 75."
@@ -459,7 +464,11 @@ def evaluate_applicant(model, applicant):
         reasons.append(
             "Family already has a scholar."
         )
-    qualified = not reasons and prediction == 1
+    qualified = (
+    not reasons
+    and prediction == 1
+    and exam_passed == 1
+    )
 
     exam_percentage = (
         exam_score / exam_total * 100
