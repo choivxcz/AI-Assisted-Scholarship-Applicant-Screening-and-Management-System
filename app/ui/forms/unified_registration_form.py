@@ -1,4 +1,3 @@
-
 import re
 
 from PyQt6.QtCore import QDate
@@ -208,21 +207,15 @@ class UnifiedRegistrationForm(QDialog):
         application_form.addRow(
             "MSWDO Poverty Eligibility", self.mswdo_poverty_eligible
         )
-        application_form.addRow(
-            "Household Size *", self.household
-        )
+        application_form.addRow("Household Size *", self.household)
         application_form.addRow(
             "Children Count *", self.children_count
         )
         application_form.addRow(
             "Senior Count *", self.senior_count
         )
-        application_form.addRow(
-            "PWD Count *", self.pwd_count
-        )
-        application_form.addRow(
-            "Solo Parent", self.solo_parent
-        )
+        application_form.addRow("PWD Count *", self.pwd_count)
+        application_form.addRow("Solo Parent", self.solo_parent)
         application_form.addRow(
             "Number of Dependents *", self.dependents_count
         )
@@ -232,9 +225,7 @@ class UnifiedRegistrationForm(QDialog):
         application_form.addRow(
             "Raw Exam Score *", self.exam_raw_score
         )
-        application_form.addRow(
-            "Exam Status", self.exam_passed
-        )
+        application_form.addRow("Exam Status", self.exam_passed)
         application_form.addRow(
             "4Ps Beneficiary", self.four_ps_beneficiary
         )
@@ -249,7 +240,6 @@ class UnifiedRegistrationForm(QDialog):
         )
 
         # Residency has been removed from the visible form.
-
         content_layout.addWidget(application_group)
 
         # Update derived values whenever relevant input changes.
@@ -447,6 +437,17 @@ class UnifiedRegistrationForm(QDialog):
                 "Please enter a valid email address.",
             )
             self.email.setFocus()
+            return
+
+        phone = self.phone.text().strip()
+        phone_digits = re.sub(r"\D", "", phone)
+        if len(phone_digits) < 7 or len(phone_digits) > 15:
+            QMessageBox.warning(
+                self,
+                "Validation Error",
+                "Please enter a valid phone number (7 to 15 digits).",
+            )
+            self.phone.setFocus()
             return
 
         if self.academic_average.value() <= 0:

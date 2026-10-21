@@ -1,4 +1,3 @@
-
 from database.connection import get_connection
 
 
@@ -55,13 +54,17 @@ class ApplicationRepository:
         if "scholarship_year" in data:
             year = int(data["scholarship_year"])
             if not 2000 <= year <= 2200:
-                raise ValueError("Scholarship year must be between 2000 and 2200.")
+                raise ValueError(
+                    "Scholarship year must be between 2000 and 2200."
+                )
             data["scholarship_year"] = year
 
         if "academic_average" in data:
             average = float(data["academic_average"])
             if not 0 <= average <= 100:
-                raise ValueError("Academic average must be between 0 and 100.")
+                raise ValueError(
+                    "Academic average must be between 0 and 100."
+                )
             data["academic_average"] = average
 
         if "monthly_income" in data:
@@ -70,7 +73,40 @@ class ApplicationRepository:
                 raise ValueError("Monthly income cannot be negative.")
             data["monthly_income"] = income
 
-        if "exam_score" in data and data["exam_score"] is not None:
+        raw = data.get("exam_raw_score")
+        total = data.get("exam_total_items")
+        exam_fields_present = (
+            "exam_raw_score" in data or "exam_total_items" in data
+        )
+
+        if exam_fields_present:
+            if raw is None or total is None:
+                raise ValueError(
+                    "Both raw exam score and total exam items are required."
+                )
+
+            try:
+                raw = int(raw)
+                total = int(total)
+            except (TypeError, ValueError) as exc:
+                raise ValueError(
+                    "Exam score and total items must be whole numbers."
+                ) from exc
+
+            if total < 1:
+                raise ValueError("Exam total items must be at least 1.")
+
+            if raw < 0 or raw > total:
+                raise ValueError(
+                    "Raw exam score must be between 0 and total exam items."
+                )
+
+            data["exam_raw_score"] = raw
+            data["exam_total_items"] = total
+            data["exam_score"] = round(raw / total * 100, 2)
+            data["exam_passed"] = raw >= 0.8 * total
+
+        elif data.get("exam_score") is not None:
             score = float(data["exam_score"])
             if not 0 <= score <= 100:
                 raise ValueError("Exam score must be between 0 and 100.")
@@ -81,6 +117,7 @@ class ApplicationRepository:
             "children_count",
             "senior_count",
             "pwd_count",
+            "dependents_count",
             "scholars_in_family",
         )
 
@@ -98,7 +135,12 @@ class ApplicationRepository:
 
         if all(
             field in data
-            for field in ("household", "children_count", "senior_count", "pwd_count")
+            for field in (
+                "household",
+                "children_count",
+                "senior_count",
+                "pwd_count",
+            )
         ):
             if (
                 data["children_count"]
@@ -107,7 +149,8 @@ class ApplicationRepository:
                 > data["household"]
             ):
                 raise ValueError(
-                    "Children, seniors, and PWD counts cannot exceed household size."
+                    "Children, seniors, and PWD counts cannot exceed "
+                    "household size."
                 )
 
         if "status" in data:
@@ -153,6 +196,9 @@ class ApplicationRepository:
         dependent=False,
         exam_score=None,
         exam_passed=False,
+        exam_raw_score=None,
+        exam_total_items=None,
+        dependents_count=0,
         four_ps_beneficiary=False,
         spes_beneficiary=False,
         scholars_in_family=0,
@@ -175,6 +221,9 @@ class ApplicationRepository:
             "dependent": dependent,
             "exam_score": exam_score,
             "exam_passed": exam_passed,
+            "exam_raw_score": exam_raw_score,
+            "exam_total_items": exam_total_items,
+            "dependents_count": dependents_count,
             "four_ps_beneficiary": four_ps_beneficiary,
             "spes_beneficiary": spes_beneficiary,
             "scholars_in_family": scholars_in_family,
@@ -337,7 +386,9 @@ class ApplicationRepository:
         if not fields:
             return False
 
-        invalid_fields = set(fields) - ApplicationRepository.ALLOWED_UPDATE_FIELDS
+        invalid_fields = (
+            set(fields) - ApplicationRepository.ALLOWED_UPDATE_FIELDS
+        )
 
         if invalid_fields:
             raise ValueError(
@@ -391,7 +442,8 @@ class ApplicationRepository:
                     > combined["household"]
                 ):
                     raise ValueError(
-                        "Household counts must be valid and cannot exceed household size."
+                        "Household counts must be valid and cannot exceed "
+                        "household size."
                     )
 
             set_clause = ", ".join(

@@ -1,0 +1,1262 @@
+import json
+from string import Template
+
+from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtGui import QFontDatabase
+from PyQt6.QtWidgets import (
+    QFrame,
+    QGridLayout,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QMenu,
+    QMessageBox,
+    QProgressBar,
+    QPushButton,
+    QScrollArea,
+    QSizePolicy,
+    QVBoxLayout,
+    QWidget,
+)
+
+from app.repositories.application_repository import ApplicationRepository
+from app.repositories.screening_result_repository import (
+    ScreeningResultRepository,
+)
+from app.services.screening_persistence_service import (
+    ScreeningPersistenceService,
+)
+
+# Signed-in user shown in the optional top bar: (name, role, initials)
+CURRENT_USER = ("Mika Reyes", "LYDO Administrator", "MR")
+
+ALL_RESULTS = "All advisory results"
+
+# ------------------------------------------------------------------ palette
+P = {
+    "bg": "#F4F7FC",
+    "border": "#E2E8F0",
+    "ink": "#0F172A",
+    "text": "#334155",
+    "muted": "#64748B",
+    "faint": "#94A3B8",
+    "primary": "#1D4ED8",
+    "primary_hover": "#1E40AF",
+    "primary_off": "#9DB4EE",
+    "tint": "#E3EDFF",
+    "tint_border": "#C7D8F8",
+    "select": "#EAF1FF",
+    "hover": "#F5F8FE",
+    "panel": "#F4F7FC",
+    "head": "#F1F5FB",
+    "track": "#E2E8F0",
+    "warn_bg": "#FEF3D6",
+    "warn_text": "#B45309",
+    "bad_bg": "#FDE4E4",
+    "bad_text": "#B91C1C",
+    "ok_bg": "#E3EDFF",
+    "ok_text": "#1D4ED8",
+}
+
+# Scoped to the ML Screening page only (applied with page.setStyleSheet).
+ML_STYLE = Template("""
+QWidget { font-family: "$FONT"; }
+QWidget#ml_page { background: $bg; }
+QScrollArea#ml_scroll { background: transparent; border: none; }
+QScrollArea#ml_scroll > QWidget > QWidget { background: transparent; }
+QWidget#ml_body { background: transparent; }
+QLabel { background: transparent; color: $text; }
+
+/* top bar (standalone preview only) */
+QFrame#ml_topbar { background: #FFFFFF; border: none; border-bottom: 1px solid $border; }
+QLabel#ml_crumb { color: $muted; font-size: 9pt; }
+QLabel#ml_crumb_current { color: $ink; font-weight: 600; font-size: 9pt; }
+QLabel#ml_chip { background: $head; color: $muted; font-size: 8pt;
+    padding: 5px 9px; border-radius: 4px; }
+QLabel#ml_avatar { background: $tint; color: $primary; font-weight: 600;
+    font-size: 8pt; border-radius: 16px; }
+QLabel#ml_user_name { color: $ink; font-weight: 600; font-size: 9pt; }
+QLabel#ml_user_role { color: $muted; font-size: 8pt; }
+
+/* headings */
+QLabel#ml_title { font-size: 22pt; font-weight: 600; color: $ink; }
+QLabel#ml_muted { color: $muted; font-size: 9pt; }
+QLabel#ml_tiny { color: $muted; font-size: 8pt; }
+QLabel#ml_note { color: $muted; font-size: 8.5pt; }
+
+/* banner */
+QFrame#ml_banner { background: $tint; border: 1px solid $tint_border; border-radius: 6px; }
+QLabel#banner_icon { color: $primary; font-size: 13pt; }
+QLabel#banner_title { color: $ink; font-weight: 600; font-size: 9.5pt; }
+QLabel#banner_sub { color: $muted; font-size: 8.5pt; }
+
+/* cards */
+QFrame#ml_card { background: #FFFFFF; border: 1px solid $border; border-radius: 6px; }
+
+/* inputs and buttons */
+QLineEdit#ml_input { background: #FFFFFF; border: 1px solid #D5DEEB; border-radius: 6px;
+    padding: 0 12px; font-size: 9pt; color: $ink; }
+QLineEdit#ml_input:focus { border: 1px solid $primary; }
+QLineEdit#ml_input:read-only { background: #FFFFFF; }
+QPushButton#ml_primary { background: $primary; border: none; border-radius: 6px;
+    padding: 0 18px; font-weight: 600; font-size: 9pt; color: #FFFFFF; }
+QPushButton#ml_primary:hover { background: $primary_hover; }
+QPushButton#ml_primary:disabled { background: $primary_off; }
+QPushButton#ml_secondary { background: #FFFFFF; border: 1px solid #D5DEEB; border-radius: 6px;
+    padding: 0 16px; font-weight: 600; font-size: 9pt; color: $ink; }
+QPushButton#ml_secondary:hover { background: $head; }
+QPushButton#ml_secondary:disabled { color: $faint; }
+QPushButton#ml_secondary::menu-indicator { image: none; width: 0px; }
+QMenu { background: #FFFFFF; border: 1px solid $border; padding: 4px; }
+QMenu::item { padding: 7px 22px; color: $text; font-size: 9pt; }
+QMenu::item:selected { background: $tint; color: $ink; }
+
+/* table */
+QFrame#ml_table_header { background: $head; border: none; border-radius: 4px; }
+QLabel#ml_th { color: $muted; font-weight: 600; font-size: 7.5pt; }
+QFrame#ml_row { background: transparent; border: none; border-bottom: 1px solid #EDF1F7; }
+QFrame#ml_row:hover { background: $hover; }
+QFrame#ml_row[selected="true"] { background: $select; }
+QLabel#cell_main { color: $ink; font-weight: 600; font-size: 9pt; }
+QLabel#cell_text { color: $text; font-size: 9pt; }
+QLabel#cell_sub { color: $faint; font-size: 7.5pt; }
+QLabel#cell_status { color: $warn_text; font-size: 8pt; }
+QLabel#cell_link { color: $primary; font-weight: 600; font-size: 8.5pt; }
+QLabel#prob_num { color: $ink; font-weight: 600; font-size: 9pt; }
+QLabel#pill_ok, QLabel#pill_warn, QLabel#pill_bad {
+    font-weight: 600; font-size: 8pt; padding: 4px 9px; border-radius: 3px; }
+QLabel#pill_ok { background: $ok_bg; color: $ok_text; }
+QLabel#pill_warn { background: $warn_bg; color: $warn_text; }
+QLabel#pill_bad { background: $bad_bg; color: $bad_text; }
+QProgressBar { background: $track; border: none; border-radius: 3px; }
+QProgressBar::chunk { background: $primary; border-radius: 3px; }
+QProgressBar[kind="warn"]::chunk { background: #D97706; }
+QProgressBar[kind="bad"]::chunk { background: #DC2626; }
+
+/* detail */
+QLabel#detail_title { font-size: 12pt; color: $ink; }
+QFrame#ml_panel { background: $panel; border: 1px solid $border; border-radius: 6px; }
+QLabel#panel_title { font-weight: 600; font-size: 9.5pt; color: $ink; }
+QLabel#f_label { color: $muted; font-size: 8pt; }
+QLabel#f_value { color: $ink; font-size: 9pt; font-weight: 500; }
+QLabel#panel_note { color: $muted; font-size: 7.5pt; }
+QLabel#field_label { color: $text; font-weight: 600; font-size: 8.5pt; }
+QFrame#ml_footer_line { background: $border; border: none; max-height: 1px; min-height: 1px; }
+""")
+
+
+def _font_family():
+    """Inter (as in the mockup) if installed, otherwise Segoe UI."""
+    return "Inter" if "Inter" in QFontDatabase.families() else "Segoe UI"
+
+
+def _pill_css(background, color):
+    return (
+        f"background: {background}; color: {color}; border-radius: 3px;"
+        "padding: 4px 9px; font-size: 8pt; font-weight: 600;"
+    )
+
+
+def _lbl(text="", name=None, wrap=False):
+    w = QLabel(text)
+    if name:
+        w.setObjectName(name)
+    if wrap:
+        w.setWordWrap(True)
+    return w
+
+
+def _vbox(*widgets, spacing=0):
+    box = QVBoxLayout()
+    box.setSpacing(spacing)
+    box.setContentsMargins(0, 0, 0, 0)
+    for w in widgets:
+        box.addWidget(w)
+    return box
+
+
+def _repolish(w):
+    w.style().unpolish(w)
+    w.style().polish(w)
+
+
+def _advisory_kind(text):
+    value = str(text or "").lower()
+    if "reject" in value or "not qualified" in value:
+        return "bad"
+    if "review" in value or "not screened" in value:
+        return "warn"
+    return "ok"
+
+
+def _stack(top, bottom, top_name, bottom_name):
+    """Two stacked labels, vertically centered, as one cell widget."""
+    cell = QWidget()
+    layout = QVBoxLayout(cell)
+    layout.setContentsMargins(0, 0, 0, 0)
+    layout.setSpacing(2)
+    layout.addStretch()
+    layout.addWidget(_lbl(top, top_name))
+    if bottom:
+        layout.addWidget(_lbl(bottom, bottom_name))
+    layout.addStretch()
+    return cell
+
+
+class _MLPage(QWidget):
+    """Page widget that tells the mixin the first time it is shown."""
+
+    first_shown = pyqtSignal()
+
+    def __init__(self):
+        super().__init__()
+        self._announced = False
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        if not self._announced:
+            self._announced = True
+            self.first_shown.emit()
+
+
+class _StatusLabel(QLabel):
+    """Summary label that hides itself while it has no text."""
+
+    def setText(self, text):
+        super().setText(text)
+        self.setVisible(bool(text))
+
+
+class _MLResultRow(QFrame):
+    clicked = pyqtSignal(int)
+
+    COLS = (170, 190, 130, 190, 190, 130, 130)
+
+    def __init__(self, application_id, rec):
+        super().__init__()
+        self.application_id = application_id
+        self.setObjectName("ml_row")
+        self.setProperty("selected", False)
+        self.setAttribute(Qt.WidgetAttribute.WA_Hover, True)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setFixedHeight(60)
+
+        h = QHBoxLayout(self)
+        h.setContentsMargins(12, 0, 12, 0)
+        h.setSpacing(0)
+
+        h.addWidget(
+            _stack(rec["app_id"], rec["applicant_id"], "cell_main", "cell_sub"),
+            self.COLS[0],
+        )
+        h.addWidget(
+            _stack(rec["name"], rec["status"], "cell_main", "cell_status"),
+            self.COLS[1],
+        )
+        h.addWidget(_lbl(rec["prediction"], "cell_text"), self.COLS[2])
+
+        pill = _lbl(rec["advisory"], "pill_" + rec["kind"])
+        pill_wrap = QWidget()
+        pill_row = QHBoxLayout(pill_wrap)
+        pill_row.setContentsMargins(0, 0, 0, 0)
+        pill_row.addWidget(pill, 0, Qt.AlignmentFlag.AlignVCenter)
+        pill_row.addStretch()
+        h.addWidget(pill_wrap, self.COLS[3])
+
+        prob_wrap = QWidget()
+        prob = QHBoxLayout(prob_wrap)
+        prob.setContentsMargins(0, 0, 0, 0)
+        prob.setSpacing(8)
+        num = _lbl(rec["prob_short"], "prob_num")
+        num.setFixedWidth(44)
+        bar = QProgressBar()
+        bar.setRange(0, 100)
+        bar.setValue(int(round(rec["prob_value"])))
+        bar.setTextVisible(False)
+        bar.setFixedSize(72, 6)
+        bar.setProperty("kind", rec["kind"])
+        prob.addWidget(num)
+        prob.addWidget(bar, 0, Qt.AlignmentFlag.AlignVCenter)
+        prob.addStretch()
+        h.addWidget(prob_wrap, self.COLS[4])
+
+        h.addWidget(
+            _stack(rec["screened_top"], rec["screened_bottom"], "cell_text", "cell_sub"),
+            self.COLS[5],
+        )
+
+        self.link = _lbl("Open record →", "cell_link")
+        h.addWidget(self.link, self.COLS[6])
+
+    def set_selected(self, selected):
+        self.setProperty("selected", selected)
+        self.link.setText(
+            "Viewing details ↓" if selected else "Open record →"
+        )
+        _repolish(self)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.clicked.emit(self.application_id)
+        super().mousePressEvent(event)
+
+
+class _MLPanel(QFrame):
+    def __init__(self, title, rows, note=None):
+        super().__init__()
+        self.setObjectName("ml_panel")
+        self.values = {}
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(16, 14, 16, 14)
+        outer.setSpacing(12)
+        outer.addWidget(_lbl(title, "panel_title"))
+
+        grid = QGridLayout()
+        grid.setHorizontalSpacing(14)
+        grid.setVerticalSpacing(12)
+        for r, row in enumerate(rows):
+            for c, (label, key) in enumerate(row):
+                value = _lbl("—", "f_value")
+                value.setWordWrap(True)
+                self.values[key] = value
+                grid.addLayout(_vbox(_lbl(label, "f_label"), value, spacing=3), r, c)
+        outer.addLayout(grid)
+        outer.addStretch()
+        if note:
+            outer.addWidget(_lbl(note, "panel_note", wrap=True))
+
+    def fill(self, rec):
+        for key, w in self.values.items():
+            w.setText(str(rec.get(key, "—")))
+
+    def clear(self):
+        for w in self.values.values():
+            w.setText("—")
+
+
+class MLScreeningPageMixin:
+    # ------------------------------------------------------------------ UI
+    def create_ml_screening_page(self, with_topbar=False):
+        # with_topbar=False when the main window already draws its own top bar.
+        if not hasattr(self, "_ml_current_results"):
+            self._ml_current_results = {}
+        if not hasattr(self, "_ml_auto_screen_done"):
+            self._ml_auto_screen_done = False
+
+        self._ml_records = {}
+        self._ml_rows = {}
+        self._ml_selected_id = None
+        self._ml_filter_value = ALL_RESULTS
+
+        page = _MLPage()
+        page.setObjectName("ml_page")
+        style = ML_STYLE.substitute(P, FONT=_font_family())
+        if not with_topbar:
+            # Embedded in the main window: it already provides the page
+            # background, so don't paint a second one.
+            style += "\nQWidget#ml_page { background: transparent; }\n"
+        page.setStyleSheet(style)
+        page.first_shown.connect(self._ml_on_first_shown)
+
+        root = QVBoxLayout(page)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
+        if with_topbar:
+            root.addWidget(self._ml_create_topbar())
+
+        scroll = QScrollArea()
+        scroll.setObjectName("ml_scroll")
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+
+        body = QWidget()
+        body.setObjectName("ml_body")
+        layout = QVBoxLayout(body)
+        if with_topbar:
+            layout.setContentsMargins(32, 28, 32, 20)
+        else:
+            layout.setContentsMargins(0, 20, 0, 12)
+        layout.setSpacing(16)
+
+        layout.addLayout(self._ml_create_header())
+        layout.addWidget(self._ml_create_banner())
+        layout.addWidget(self._ml_create_table_card())
+        layout.addWidget(self._ml_create_details_card())
+
+        self.ml_screening_result = _StatusLabel("")
+        self.ml_screening_result.setObjectName("ml_note")
+        self.ml_screening_result.setWordWrap(True)
+        self.ml_screening_result.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse
+        )
+        self.ml_screening_result.hide()
+        layout.addWidget(self.ml_screening_result)
+
+        layout.addLayout(self._ml_create_footer())
+        layout.addStretch()
+
+        scroll.setWidget(body)
+        root.addWidget(scroll, 1)
+        return page
+
+    def _ml_on_first_shown(self):
+        # Load data the first time the page appears, in case the main window
+        # does not call refresh itself.
+        if not self._ml_records:
+            self.refresh_ml_screening_applications()
+
+    def _ml_create_topbar(self):
+        bar = QFrame()
+        bar.setObjectName("ml_topbar")
+        bar.setFixedHeight(64)
+        row = QHBoxLayout(bar)
+        row.setContentsMargins(32, 0, 32, 0)
+        row.setSpacing(10)
+        center = Qt.AlignmentFlag.AlignVCenter
+
+        name, role, initials = CURRENT_USER
+        avatar = _lbl(initials, "ml_avatar")
+        avatar.setFixedSize(32, 32)
+        avatar.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        row.addWidget(_lbl("Scholarships", "ml_crumb"), 0, center)
+        row.addWidget(_lbl("/", "ml_crumb"), 0, center)
+        row.addWidget(_lbl("ML Screening", "ml_crumb_current"), 0, center)
+        row.addStretch()
+        row.addWidget(_lbl("Demonstration data", "ml_chip"), 0, center)
+        row.addWidget(_lbl("AY 2026–2027", "ml_crumb"), 0, center)
+        row.addSpacing(6)
+        row.addWidget(avatar, 0, center)
+        row.addLayout(_vbox(_lbl(name, "ml_user_name"), _lbl(role, "ml_user_role")))
+        return bar
+
+    def _ml_create_header(self):
+        row = QHBoxLayout()
+        text = QVBoxLayout()
+        text.setSpacing(6)
+        text.addWidget(_lbl("ML Screening", "ml_title"))
+        text.addWidget(
+            _lbl(
+                "Review structured applicant data and AI-assisted screening "
+                "recommendations.",
+                "ml_muted",
+            )
+        )
+        row.addLayout(text)
+        row.addStretch()
+        return row
+
+    def _ml_create_banner(self):
+        banner = QFrame()
+        banner.setObjectName("ml_banner")
+        h = QHBoxLayout(banner)
+        h.setContentsMargins(16, 12, 16, 12)
+        h.setSpacing(12)
+        icon = _lbl("⛨", "banner_icon")
+        h.addWidget(icon, 0, Qt.AlignmentFlag.AlignTop)
+        h.addLayout(
+            _vbox(
+                _lbl("Advisory only. Never an automatic award or rejection.",
+                     "banner_title"),
+                _lbl(
+                    "The Initial Random Forest Classifier supports LYDO review. "
+                    "Predictions and sample probabilities are not proof of "
+                    "eligibility. Officials decide who proceeds to a human "
+                    "interview and make all final decisions.",
+                    "banner_sub",
+                    wrap=True,
+                ),
+                spacing=3,
+            ),
+            1,
+        )
+        return banner
+
+    def _ml_create_table_card(self):
+        card = QFrame()
+        card.setObjectName("ml_card")
+        v = QVBoxLayout(card)
+        v.setContentsMargins(16, 16, 16, 12)
+        v.setSpacing(12)
+
+        tools = QHBoxLayout()
+        tools.setSpacing(10)
+
+        self.ml_search = QLineEdit()
+        self.ml_search.setObjectName("ml_input")
+        self.ml_search.setPlaceholderText("Search application or applicant ID")
+        self.ml_search.setFixedSize(320, 38)
+        self.ml_search.textChanged.connect(lambda _t: self._apply_ml_filter())
+
+        self.ml_filter_button = QPushButton(ALL_RESULTS + "  ▾")
+        self.ml_filter_button.setObjectName("ml_secondary")
+        self.ml_filter_button.setFixedHeight(38)
+        self.ml_filter_button.setMinimumWidth(170)
+        self.ml_filter_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._ml_rebuild_filter_menu([])
+
+        refresh = QPushButton("↻  Refresh")
+        refresh.setObjectName("ml_secondary")
+        refresh.setFixedHeight(38)
+        refresh.setCursor(Qt.CursorShape.PointingHandCursor)
+        refresh.clicked.connect(self.refresh_ml_screening_applications)
+
+        rescreen = QPushButton("Re-screen all")
+        rescreen.setObjectName("ml_secondary")
+        rescreen.setFixedHeight(38)
+        rescreen.setCursor(Qt.CursorShape.PointingHandCursor)
+        rescreen.clicked.connect(self.rescreen_all_applications)
+
+        tools.addWidget(self.ml_search)
+        tools.addStretch()
+        tools.addWidget(self.ml_filter_button)
+        tools.addWidget(refresh)
+        tools.addWidget(rescreen)
+        v.addLayout(tools)
+
+        header = QFrame()
+        header.setObjectName("ml_table_header")
+        header.setFixedHeight(40)
+        header_row = QHBoxLayout(header)
+        header_row.setContentsMargins(12, 0, 12, 0)
+        header_row.setSpacing(0)
+        for text, stretch in zip(
+            (
+                "APPLICATION / APPLICANT ID",
+                "APPLICANT / STATUS",
+                "ML PREDICTION",
+                "ADVISORY RESULT",
+                "QUALIFIED PROBABILITY",
+                "LAST SCREENED",
+                "REVIEW",
+            ),
+            _MLResultRow.COLS,
+        ):
+            header_row.addWidget(_lbl(text, "ml_th"), stretch)
+        v.addWidget(header)
+
+        self.ml_rows_layout = QVBoxLayout()
+        self.ml_rows_layout.setSpacing(0)
+        self.ml_rows_layout.setContentsMargins(0, 0, 0, 0)
+        v.addLayout(self.ml_rows_layout)
+
+        self.ml_empty_label = _lbl("No applications to show.", "ml_muted")
+        self.ml_empty_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.ml_empty_label.setContentsMargins(12, 28, 12, 28)
+        v.addWidget(self.ml_empty_label)
+
+        self.ml_count_note = _lbl("", "ml_note")
+        v.addWidget(self.ml_count_note)
+        return card
+
+    def _ml_create_details_card(self):
+        card = QFrame()
+        card.setObjectName("ml_card")
+        v = QVBoxLayout(card)
+        v.setContentsMargins(0, 0, 0, 0)
+        v.setSpacing(0)
+
+        inner = QVBoxLayout()
+        inner.setContentsMargins(20, 18, 20, 14)
+        inner.setSpacing(14)
+
+        head = QHBoxLayout()
+        self.ml_detail_title = _lbl("Screening details", "detail_title")
+        self.ml_detail_sub = _lbl(
+            "Select an application to see its screening inputs and "
+            "advisory outputs.", "ml_muted")
+        head.addLayout(_vbox(self.ml_detail_title, self.ml_detail_sub, spacing=3), 1)
+        self.ml_status_pill = _lbl("")
+        self.ml_status_pill.hide()
+        head.addWidget(self.ml_status_pill, 0, Qt.AlignmentFlag.AlignTop)
+        inner.addLayout(head)
+
+        self.ml_panels = [
+            _MLPanel("Application & academics", [
+                [("Program", "program")],
+                [("Year", "year")],
+                [("Academic Average", "average")],
+                [("Exam Score", "exam")],
+                [("Exam %", "exam_pct"), ("Exam Passed", "exam_passed")],
+            ]),
+            _MLPanel("Household profile", [
+                [("Monthly Income", "income")],
+                [("Household Size", "household"), ("Dependent", "dependent")],
+                [("Children", "children"), ("Seniors", "seniors")],
+                [("PWDs", "pwds"), ("Solo Parent", "solo")],
+                [("Scholars in Family", "scholars")],
+            ]),
+            _MLPanel("Eligibility inputs", [
+                [("MSWDO Threshold", "threshold")],
+                [("MSWDO Eligible", "mswdo")],
+                [("SPES", "spes")],
+                [("4Ps Beneficiary", "fourps")],
+            ], note="Threshold and exam pass rule are configuration values, "
+                    "not government policy."),
+            _MLPanel("Model advisory", [
+                [("ML Prediction", "prediction")],
+                [("Advisory Result", "advisory")],
+                [("Qualified Probability", "prob_text")],
+                [("Status", "status")],
+            ], note="Advisory result does not change the applicant's "
+                    "official status."),
+        ]
+        cards = QHBoxLayout()
+        cards.setSpacing(12)
+        for panel in self.ml_panels:
+            panel.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+            cards.addWidget(panel, 1)
+        inner.addLayout(cards)
+
+        inner.addWidget(_lbl("Review notes", "field_label"))
+        self.ml_notes = QLineEdit()
+        self.ml_notes.setObjectName("ml_input")
+        self.ml_notes.setFixedHeight(38)
+        self.ml_notes.setReadOnly(True)
+        self.ml_notes.setPlaceholderText("Rule reasons for the selected application appear here")
+        inner.addWidget(self.ml_notes)
+        v.addLayout(inner)
+
+        line = QFrame()
+        line.setObjectName("ml_footer_line")
+        v.addWidget(line)
+
+        foot = QHBoxLayout()
+        foot.setContentsMargins(20, 12, 20, 12)
+        foot.setSpacing(10)
+        foot.addWidget(
+            _lbl("LYDO official review required. No scholarship decision is "
+                 "made here.", "ml_tiny")
+        )
+        foot.addStretch()
+
+        self.ml_screen_button = QPushButton("Screen this application")
+        self.ml_screen_button.setObjectName("ml_secondary")
+        self.ml_screen_button.setFixedHeight(38)
+        self.ml_screen_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.ml_screen_button.clicked.connect(self.screen_selected_application)
+
+        self.ml_endorse_button = QPushButton("Endorse for interview")
+        self.ml_endorse_button.setObjectName("ml_primary")
+        self.ml_endorse_button.setFixedHeight(38)
+        self.ml_endorse_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.ml_endorse_button.clicked.connect(self._ml_endorse_clicked)
+
+        self.ml_screen_button.setEnabled(False)
+        self.ml_endorse_button.setEnabled(False)
+        foot.addWidget(self.ml_screen_button)
+        foot.addWidget(self.ml_endorse_button)
+        v.addLayout(foot)
+        return card
+
+    def _ml_create_footer(self):
+        row = QHBoxLayout()
+        row.addWidget(
+            _lbl("Fictional records for demonstration only. "
+                 "Authorized LYDO personnel access.", "ml_tiny")
+        )
+        row.addStretch()
+        row.addWidget(_lbl("Santa Cruz, Laguna · LYDO", "ml_tiny"))
+        return row
+
+    def _ml_endorse_clicked(self):
+        QMessageBox.information(
+            self,
+            "Endorse for interview",
+            "Endorsement is not connected yet. Hook this button to your "
+            "interview workflow.",
+        )
+
+    # --------------------------------------------------------- filter menu
+    def _ml_rebuild_filter_menu(self, advisory_values):
+        menu = QMenu(self.ml_filter_button)
+        for value in [ALL_RESULTS] + list(advisory_values):
+            action = menu.addAction(value)
+            action.triggered.connect(
+                lambda _checked=False, v=value: self._ml_set_filter(v)
+            )
+        self.ml_filter_button.setMenu(menu)
+
+    def _ml_set_filter(self, value):
+        self._ml_filter_value = value
+        self.ml_filter_button.setText(value + "  ▾")
+        self._apply_ml_filter()
+
+    # ------------------------------------------------------------- helpers
+    @staticmethod
+    def _as_bool_display(value):
+        if value is None or value == "":
+            return "Not provided"
+
+        if isinstance(value, str):
+            normalized = value.strip().lower()
+
+            if normalized in ("1", "true", "yes"):
+                return "Yes"
+
+            if normalized in ("0", "false", "no"):
+                return "No"
+
+        return "Yes" if bool(value) else "No"
+
+    @staticmethod
+    def _format_money(value):
+        if value is None or value == "":
+            return "Not provided"
+
+        try:
+            return f"₱{float(value):,.2f}"
+        except (TypeError, ValueError):
+            return str(value)
+
+    @staticmethod
+    def _format_number(value, suffix=""):
+        if value is None or value == "":
+            return "Not provided"
+
+        try:
+            return f"{float(value):,.2f}{suffix}"
+        except (TypeError, ValueError):
+            return str(value)
+
+    def _clear_ml_rows(self):
+        while self.ml_rows_layout.count():
+            item = self.ml_rows_layout.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.deleteLater()
+        self._ml_rows = {}
+        self._ml_records = {}
+        self.ml_empty_label.setText("No applications to show.")
+        self.ml_empty_label.setVisible(True)
+        self.ml_count_note.setText("")
+        self._ml_clear_details()
+
+    def _ml_clear_details(self):
+        self._ml_selected_id = None
+        self.ml_detail_title.setText("Screening details")
+        self.ml_detail_sub.setText(
+            "Select an application to see its screening inputs and "
+            "advisory outputs.")
+        self.ml_status_pill.hide()
+        for panel in self.ml_panels:
+            panel.clear()
+        self.ml_notes.clear()
+        self.ml_screen_button.setEnabled(False)
+        self.ml_endorse_button.setEnabled(False)
+
+    # ----------------------------------------------------------- screening
+    def _screen_application_record(self, application, service):
+        application_id = int(application["application_id"])
+        applicant_data = self._build_screening_input(application)
+
+        return service.screen_application(
+            application_id=application_id,
+            applicant_data=applicant_data,
+            screened_by=None,
+        )
+
+    @staticmethod
+    def _result_to_cache(result):
+        """Normalize a newly saved screening result for the page cache."""
+        return {
+            "screening_id": result["screening_id"],
+            "model_version_id": result["model_version_id"],
+            "screening_input_fingerprint": result.get(
+                "screening_input_fingerprint"
+            ),
+            "predicted_class": result["predicted_class"],
+            "model_prediction": result["model_prediction"],
+            "confidence_score": result["model_probability_percent"] / 100.0,
+            "model_probability_percent": result["model_probability_percent"],
+            "mswd_threshold": result["mswd_threshold"],
+            "mswd_eligible": result["mswd_eligible"],
+            "exam_percentage": result["exam_percentage"],
+            "exam_passed": result["exam_passed"],
+            "reasons": result.get("reasons", []),
+            "screened_at": "Just screened",
+        }
+
+    def _run_screening_for_all(self, force_rescreen=False):
+        """Screen only applications with changed inputs or model versions."""
+        try:
+            applications = ApplicationRepository.get_all()
+
+            if not applications:
+                self._clear_ml_rows()
+                self.ml_screening_result.setText(
+                    "No active applications were found."
+                )
+                return
+
+            service = ScreeningPersistenceService()
+            completed = 0
+            unchanged = 0
+            failures = []
+
+            for application in applications:
+                application_id = int(application["application_id"])
+
+                try:
+                    applicant_data = self._build_screening_input(application)
+                    current_fingerprint = service.create_input_fingerprint(
+                        applicant_data
+                    )
+                    existing = self._ml_current_results.get(application_id)
+
+                    fingerprint_matches = (
+                        existing is not None
+                        and existing.get("screening_input_fingerprint")
+                        == current_fingerprint
+                    )
+                    model_version_matches = (
+                        existing is not None
+                        and existing.get("model_version_id")
+                        == service.model_version_id
+                    )
+
+                    if (
+                        not force_rescreen
+                        and fingerprint_matches
+                        and model_version_matches
+                    ):
+                        unchanged += 1
+                        continue
+
+                    result = self._screen_application_record(
+                        application,
+                        service,
+                    )
+                    self._ml_current_results[application_id] = (
+                        self._result_to_cache(result)
+                    )
+                    completed += 1
+
+                except Exception as error:
+                    failures.append(
+                        f"Application {application_id}: {error}"
+                    )
+
+            self._populate_ml_screening_table(applications)
+
+            summary = (
+                f"Loaded {len(applications)} active application(s). "
+                f"New screenings saved: {completed}. "
+                f"Unchanged applications skipped: {unchanged}."
+            )
+
+            if failures:
+                summary += (
+                    "\n\nSome applications could not be screened:\n"
+                    + "\n".join(failures[:8])
+                )
+
+                if len(failures) > 8:
+                    summary += f"\n…and {len(failures) - 8} more."
+
+            self.ml_screening_result.setText(summary)
+
+        except Exception as error:
+            self.show_error("ML Screening", error)
+
+    def refresh_ml_screening_applications(self):
+        """Load latest results, then screen only changed applications."""
+        try:
+            applications = ApplicationRepository.get_all()
+
+            if not applications:
+                self._clear_ml_rows()
+                self.ml_screening_result.setText(
+                    "No active applications were found."
+                )
+                return
+
+            latest_results = (
+                ScreeningResultRepository.get_latest_for_applications(
+                    [
+                        int(application["application_id"])
+                        for application in applications
+                    ]
+                )
+            )
+
+            # Always refresh the cache from the database. This also picks up
+            # screenings created by another session and prevents stale results.
+            self._ml_current_results = dict(latest_results)
+            self._ml_auto_screen_done = True
+
+            # A legacy result without a fingerprint will be screened once to
+            # establish its baseline. Existing history is preserved.
+            self._run_screening_for_all(force_rescreen=False)
+
+        except Exception as error:
+            self.show_error("ML Screening", error)
+
+    def rescreen_all_applications(self):
+        answer = QMessageBox.question(
+            self,
+            "Re-screen All Applications",
+            "This will run screening again for every active application "
+            "and save new screening records. Continue?",
+            QMessageBox.StandardButton.Yes
+            | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+
+        self._run_screening_for_all(force_rescreen=True)
+
+    # --------------------------------------------------------------- table
+    def _build_ml_record(self, application, saved):
+        application_id = int(application["application_id"])
+
+        raw_score = application.get("exam_raw_score")
+        total_items = application.get("exam_total_items")
+        stored_exam_score = application.get("exam_score")
+
+        if raw_score is not None and total_items not in (None, 0, "0", ""):
+            exam_display = f"{raw_score} / {total_items} items"
+            try:
+                exam_percentage = float(raw_score) / float(total_items) * 100
+            except (TypeError, ValueError, ZeroDivisionError):
+                exam_percentage = None
+        elif stored_exam_score is not None:
+            exam_display = f"{stored_exam_score} / 100 (stored percentage)"
+            try:
+                exam_percentage = float(stored_exam_score)
+            except (TypeError, ValueError):
+                exam_percentage = None
+        else:
+            exam_display = "Not provided"
+            exam_percentage = None
+
+        reasons = saved.get("reasons", [])
+        if isinstance(reasons, str):
+            try:
+                parsed = json.loads(reasons)
+                reasons = (
+                    parsed.get("reasons", [])
+                    if isinstance(parsed, dict)
+                    else parsed
+                )
+            except (ValueError, TypeError):
+                reasons = [reasons] if reasons else []
+
+        reasons_display = (
+            "; ".join(str(reason) for reason in reasons)
+            if reasons
+            else "No rule reasons recorded"
+        )
+
+        prob = saved.get("model_probability_percent")
+        try:
+            prob_value = float(prob)
+            prob_short = f"{prob_value:.0f}%"
+            prob_text = f"{prob_value:.2f}%"
+        except (TypeError, ValueError):
+            prob_value = 0.0
+            prob_short = "—"
+            prob_text = "Not screened"
+
+        advisory = saved.get("predicted_class") or "Not screened"
+        screened_at = str(saved.get("screened_at") or "Not screened")
+        parts = screened_at.split(" ", 1)
+        if len(parts) > 1 and parts[0][:1].isdigit():
+            screened_top, screened_bottom = parts
+        else:
+            screened_top, screened_bottom = screened_at, ""
+
+        name = (
+            application.get("applicant_name")
+            or application.get("full_name")
+            or f"Applicant {application.get('applicant_id', '')}"
+        )
+
+        exam_pct_value = saved.get("exam_percentage", exam_percentage)
+
+        return {
+            "application_id": application_id,
+            "app_id": str(application_id),
+            "applicant_id": str(application.get("applicant_id", "")),
+            "name": str(name),
+            "status": str(application.get("status") or ""),
+            "prediction": str(saved.get("model_prediction") or "Not screened"),
+            "advisory": str(advisory),
+            "kind": _advisory_kind(advisory),
+            "prob_value": prob_value,
+            "prob_short": prob_short,
+            "prob_text": prob_text,
+            "screened_top": screened_top,
+            "screened_bottom": screened_bottom,
+            "program": str(application.get("scholarship_program") or "Not provided"),
+            "year": str(application.get("scholarship_year") or "Not provided"),
+            "average": self._format_number(
+                application.get("academic_average"), " / 100"
+            ),
+            "exam": exam_display,
+            "exam_pct": self._format_number(exam_pct_value, "%"),
+            "exam_passed": self._as_bool_display(
+                saved.get("exam_passed", application.get("exam_passed"))
+            ),
+            "income": self._format_money(application.get("monthly_income")),
+            "household": str(application.get("household", "Not provided")),
+            "dependent": self._as_bool_display(application.get("dependent")),
+            "children": str(application.get("children_count", 0)),
+            "seniors": str(application.get("senior_count", 0)),
+            "pwds": str(application.get("pwd_count", 0)),
+            "solo": self._as_bool_display(application.get("solo_parent")),
+            "scholars": str(application.get("scholars_in_family", 0)),
+            "threshold": self._format_money(saved.get("mswd_threshold")),
+            "mswdo": self._as_bool_display(
+                saved.get("mswd_eligible", application.get("mswdo_poverty_eligible"))
+            ),
+            "spes": self._as_bool_display(application.get("spes_beneficiary")),
+            "fourps": self._as_bool_display(application.get("four_ps_beneficiary")),
+            "notes": reasons_display,
+        }
+
+    def _populate_ml_screening_table(self, applications):
+        selected = self._ml_selected_id
+        self._clear_ml_rows()
+
+        advisory_values = []
+        for application in applications:
+            application_id = int(application["application_id"])
+            saved = self._ml_current_results.get(application_id, {})
+            rec = self._build_ml_record(application, saved)
+            self._ml_records[application_id] = rec
+
+            row = _MLResultRow(application_id, rec)
+            row.clicked.connect(self._select_ml_application)
+            self.ml_rows_layout.addWidget(row)
+            self._ml_rows[application_id] = row
+
+            if rec["advisory"] not in advisory_values:
+                advisory_values.append(rec["advisory"])
+
+        self._ml_rebuild_filter_menu(advisory_values)
+        if self._ml_filter_value not in [ALL_RESULTS] + advisory_values:
+            self._ml_filter_value = ALL_RESULTS
+        self.ml_filter_button.setText(self._ml_filter_value + "  ▾")
+
+        total = len(self._ml_records)
+        screened = sum(
+            1 for r in self._ml_records.values() if r["advisory"] != "Not screened"
+        )
+        self.ml_count_note.setText(
+            f"{total} application{'s' if total != 1 else ''} · "
+            f"{screened} screened · {total - screened} not yet screened · "
+            "Advisory results are not official decisions."
+        )
+
+        self._apply_ml_filter()
+
+        if selected in self._ml_records:
+            self._select_ml_application(selected)
+        elif self._ml_records:
+            self._select_ml_application(next(iter(self._ml_records)))
+
+    def _apply_ml_filter(self):
+        text = self.ml_search.text().strip().lower()
+        advisory = self._ml_filter_value
+        visible = 0
+
+        for application_id, row in self._ml_rows.items():
+            rec = self._ml_records[application_id]
+            matches_text = (
+                not text
+                or text in rec["app_id"].lower()
+                or text in rec["applicant_id"].lower()
+                or text in rec["name"].lower()
+            )
+            matches_filter = advisory == ALL_RESULTS or rec["advisory"] == advisory
+            show = matches_text and matches_filter
+            row.setVisible(show)
+            visible += 1 if show else 0
+
+        if not self._ml_rows:
+            self.ml_empty_label.setText("No applications to show.")
+            self.ml_empty_label.setVisible(True)
+        elif visible == 0:
+            self.ml_empty_label.setText("No applications match the current filters.")
+            self.ml_empty_label.setVisible(True)
+        else:
+            self.ml_empty_label.setVisible(False)
+
+    def _select_ml_application(self, application_id):
+        rec = self._ml_records.get(application_id)
+        if rec is None:
+            return
+
+        self._ml_selected_id = application_id
+        for row_id, row in self._ml_rows.items():
+            row.set_selected(row_id == application_id)
+
+        self.ml_detail_title.setText(f"{rec['name']} · Screening details")
+        self.ml_detail_sub.setText(
+            f"{rec['app_id']} / {rec['applicant_id']} · "
+            "All screening inputs and advisory outputs"
+        )
+
+        status = rec["status"] or "No status"
+        if "review" in status.lower():
+            css = _pill_css(P["warn_bg"], P["warn_text"])
+        else:
+            css = _pill_css("#EEF1F6", P["muted"])
+        self.ml_status_pill.setText(status)
+        self.ml_status_pill.setStyleSheet(css)
+        self.ml_status_pill.show()
+
+        for panel in self.ml_panels:
+            panel.fill(rec)
+        self.ml_notes.setText(rec["notes"])
+        self.ml_screen_button.setEnabled(True)
+        self.ml_endorse_button.setEnabled(True)
+
+    def screen_selected_application(self):
+        application_id = self._ml_selected_id
+
+        if application_id is None:
+            QMessageBox.warning(
+                self,
+                "No Application Selected",
+                "Select an application first.",
+            )
+            return
+
+        application = ApplicationRepository.get_by_id(application_id)
+
+        if application is None:
+            QMessageBox.warning(
+                self,
+                "Application Not Found",
+                "Refresh the list and try again.",
+            )
+            return
+
+        try:
+            service = ScreeningPersistenceService()
+            applicant_data = self._build_screening_input(application)
+            current_fingerprint = service.create_input_fingerprint(
+                applicant_data
+            )
+            existing = self._ml_current_results.get(application_id)
+
+            if (
+                existing is not None
+                and existing.get("screening_input_fingerprint")
+                == current_fingerprint
+                and existing.get("model_version_id")
+                == service.model_version_id
+            ):
+                QMessageBox.information(
+                    self,
+                    "Screening Up to Date",
+                    "This application has no changes to its screening inputs "
+                    "and is already screened with the current model. "
+                    "No duplicate screening record was created.",
+                )
+                return
+
+            answer = QMessageBox.question(
+                self,
+                "Screen Selected Application",
+                f"Screening inputs for application {application_id} have "
+                "changed or have no fingerprint baseline. Save a new "
+                "screening record?",
+                QMessageBox.StandardButton.Yes
+                | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+
+            if answer != QMessageBox.StandardButton.Yes:
+                return
+
+            result = self._screen_application_record(application, service)
+
+            self._ml_current_results[application_id] = (
+                self._result_to_cache(result)
+            )
+
+            self._populate_ml_screening_table(ApplicationRepository.get_all())
+
+            self.ml_screening_result.setText(
+                f"Screening saved for application {application_id}. "
+                f"Advisory: {result['predicted_class']}; "
+                f"qualified-class probability: "
+                f"{result['model_probability_percent']:.2f}%. "
+                "Human review is required."
+            )
+
+        except Exception as error:
+            QMessageBox.critical(
+                self,
+                "ML Screening Failed",
+                f"Could not screen application {application_id}.\n\n"
+                f"{error}",
+            )
+
+    @staticmethod
+    def _build_screening_input(application):
+        """Map stored application fields to the ML screening inputs."""
+
+        def number(field, default=None):
+            value = application.get(field, default)
+
+            if value is None or value == "":
+                return default
+
+            return float(value)
+
+        average = number("academic_average")
+        income = number("monthly_income")
+        household = number("household")
+
+        if average is None or income is None or household is None:
+            raise ValueError(
+                "Missing academic average, monthly income, "
+                "or household size."
+            )
+
+        raw_score = application.get("exam_raw_score")
+        total_items = application.get("exam_total_items")
+
+        if raw_score is not None and total_items not in (None, 0, "0", ""):
+            exam_score = int(float(raw_score))
+            exam_total = int(float(total_items))
+
+        else:
+            stored_score = application.get("exam_score")
+
+            if stored_score is None:
+                raise ValueError(
+                    "No exam score is recorded for this application."
+                )
+
+            exam_score = int(round(float(stored_score)))
+            exam_total = 100
+
+        dependent_value = application.get("dependents_count")
+
+        if dependent_value is None:
+            dependent_value = int(bool(application.get("dependent", False)))
+
+        return {
+            "average": float(average),
+            "income": float(income),
+            "household": int(household),
+            "children": int(application.get("children_count") or 0),
+            "seniors": int(application.get("senior_count") or 0),
+            "pwds": int(application.get("pwd_count") or 0),
+            "dependents": int(dependent_value or 0),
+            "solo": int(bool(application.get("solo_parent", False))),
+            "exam_score": exam_score,
+            "exam_total": exam_total,
+            "exam_passed": int(bool(application.get("exam_passed", False))),
+            "fourps": int(bool(application.get("four_ps_beneficiary", False))),
+            "spes": int(bool(application.get("spes_beneficiary", False))),
+            "scholars": int(application.get("scholars_in_family") or 0),
+        }

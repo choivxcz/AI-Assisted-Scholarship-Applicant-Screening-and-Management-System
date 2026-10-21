@@ -1,3 +1,5 @@
+import re
+from datetime import date, datetime
 
 from database.connection import get_connection
 
@@ -29,23 +31,69 @@ class ApplicantRepository:
     def _validate_required_text(value, field_name):
         if not isinstance(value, str) or not value.strip():
             raise ValueError(f"{field_name} is required.")
-
         return value.strip()
 
     @staticmethod
     def _validate_sex(sex):
-        if sex is None:
-            return None
+        if not isinstance(sex, str) or not sex.strip():
+            raise ValueError("Sex is required.")
 
         sex = sex.strip().upper()
-
         if sex not in ApplicantRepository.ALLOWED_SEX:
             raise ValueError(
-                f"Invalid sex value: {sex}. "
-                f"Allowed values: {', '.join(sorted(ApplicantRepository.ALLOWED_SEX))}"
+                f"Invalid sex value: {sex}. Allowed values: "
+                f"{', '.join(sorted(ApplicantRepository.ALLOWED_SEX))}"
+            )
+        return sex
+
+    @staticmethod
+    def _validate_email(email):
+        if not isinstance(email, str) or not email.strip():
+            raise ValueError("Email is required.")
+
+        email = email.strip()
+        if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", email):
+            raise ValueError("Please enter a valid email address.")
+        return email
+
+    @staticmethod
+    def _validate_phone(phone):
+        if not isinstance(phone, str) or not phone.strip():
+            raise ValueError("Phone number is required.")
+
+        phone = phone.strip()
+        digits = re.sub(r"\D", "", phone)
+        if not 7 <= len(digits) <= 15:
+            raise ValueError("Phone number must contain 7 to 15 digits.")
+        return phone
+
+    @staticmethod
+    def _validate_birth_date(birth_date):
+        if birth_date is None or not str(birth_date).strip():
+            raise ValueError("Birth date is required.")
+
+        if isinstance(birth_date, datetime):
+            birth_date = birth_date.date()
+
+        if isinstance(birth_date, date):
+            parsed = birth_date
+        else:
+            try:
+                parsed = date.fromisoformat(str(birth_date).strip())
+            except ValueError as exc:
+                raise ValueError(
+                    "Birth date must use YYYY-MM-DD format."
+                ) from exc
+
+        if parsed > date.today():
+            raise ValueError("Birth date cannot be in the future.")
+
+        if parsed < date(1900, 1, 1):
+            raise ValueError(
+                "Birth date must be on or after 1900-01-01."
             )
 
-        return sex
+        return parsed.isoformat()
 
     @staticmethod
     def create(
@@ -77,7 +125,13 @@ class ApplicantRepository:
         province = ApplicantRepository._validate_required_text(
             province, "Province"
         )
+        birth_date = ApplicantRepository._validate_birth_date(birth_date)
         sex = ApplicantRepository._validate_sex(sex)
+        email = ApplicantRepository._validate_email(email)
+        phone = ApplicantRepository._validate_phone(phone)
+        house_no_street = ApplicantRepository._validate_required_text(
+            house_no_street, "House number/street"
+        )
 
         query = """
             INSERT INTO applicants (
@@ -104,16 +158,15 @@ class ApplicantRepository:
             suffix.strip() if suffix else None,
             birth_date,
             sex,
-            email.strip() if email else None,
-            phone.strip() if phone else None,
-            house_no_street.strip() if house_no_street else None,
+            email,
+            phone,
+            house_no_street,
             barangay,
             municipality,
             province,
         )
 
         connection = get_connection()
-
         try:
             with connection.cursor() as cursor:
                 cursor.execute(query, values)
@@ -158,7 +211,6 @@ class ApplicantRepository:
         query += " ORDER BY last_name, first_name, applicant_id"
 
         connection = get_connection()
-
         try:
             with connection.cursor(dictionary=True) as cursor:
                 cursor.execute(query)
@@ -198,7 +250,6 @@ class ApplicantRepository:
         query += " LIMIT 1"
 
         connection = get_connection()
-
         try:
             with connection.cursor(dictionary=True) as cursor:
                 cursor.execute(query, tuple(values))
@@ -213,8 +264,7 @@ class ApplicantRepository:
 
         term = f"%{keyword.strip()}%"
 
-        # Intentionally search only the ID and name fields.
-        # Phone, email, address, and barangay are excluded.
+        # Search the ID and name fields only.
         query = """
             SELECT
                 applicant_id,
@@ -257,7 +307,6 @@ class ApplicantRepository:
         query += " ORDER BY last_name, first_name, applicant_id"
 
         connection = get_connection()
-
         try:
             with connection.cursor(dictionary=True) as cursor:
                 cursor.execute(query, tuple(values))
@@ -271,7 +320,6 @@ class ApplicantRepository:
             return False
 
         invalid_fields = set(fields) - ApplicantRepository.ALLOWED_UPDATE_FIELDS
-
         if invalid_fields:
             raise ValueError(
                 "Unsupported applicant field(s): "
@@ -280,35 +328,40 @@ class ApplicantRepository:
 
         fields = dict(fields)
 
-        if "first_name" in fields:
-            fields["first_name"] = ApplicantRepository._validate_required_text(
-                fields["first_name"], "First name"
-            )
+        required_text_fields = {
+            "first_name": "First name",
+            "last_name": "Last name",
+            "barangay": "Barangay",
+            "municipality": "Municipality",
+            "province": "Province",
+            "house_no_street": "House number/street",
+        }
 
-        if "last_name" in fields:
-            fields["last_name"] = ApplicantRepository._validate_required_text(
-                fields["last_name"], "Last name"
-            )
-
-        if "barangay" in fields:
-            fields["barangay"] = ApplicantRepository._validate_required_text(
-                fields["barangay"], "Barangay"
-            )
-
-        if "municipality" in fields:
-            fields["municipality"] = ApplicantRepository._validate_required_text(
-                fields["municipality"], "Municipality"
-            )
-
-        if "province" in fields:
-            fields["province"] = ApplicantRepository._validate_required_text(
-                fields["province"], "Province"
-            )
+        for field, label in required_text_fields.items():
+            if field in fields:
+                fields[field] = ApplicantRepository._validate_required_text(
+                    fields[field], label
+                )
 
         if "sex" in fields:
             fields["sex"] = ApplicantRepository._validate_sex(fields["sex"])
 
-        for field in ("middle_name", "suffix", "email", "phone", "house_no_street"):
+        if "birth_date" in fields:
+            fields["birth_date"] = ApplicantRepository._validate_birth_date(
+                fields["birth_date"]
+            )
+
+        if "email" in fields:
+            fields["email"] = ApplicantRepository._validate_email(
+                fields["email"]
+            )
+
+        if "phone" in fields:
+            fields["phone"] = ApplicantRepository._validate_phone(
+                fields["phone"]
+            )
+
+        for field in ("middle_name", "suffix"):
             if field in fields and isinstance(fields[field], str):
                 fields[field] = fields[field].strip() or None
 
@@ -323,7 +376,6 @@ class ApplicantRepository:
         """
 
         connection = get_connection()
-
         try:
             with connection.cursor() as cursor:
                 cursor.execute(query, tuple(values))
@@ -341,7 +393,6 @@ class ApplicantRepository:
 
     @staticmethod
     def archive(applicant_id):
-
         connection = get_connection()
 
         try:

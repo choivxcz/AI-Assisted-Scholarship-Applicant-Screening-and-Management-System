@@ -195,7 +195,7 @@ class InterviewsPageMixin:
     # ------------------------------------------------------------------ UI
     def create_interviews_page(self, with_topbar=False):
         # with_topbar=False when the main window already draws its own top bar.
-        self._iv_records = [dict(item) for item in SAMPLE_INTERVIEWS]
+        self._iv_records = []
         self._iv_selected = None
         self._iv_tab = "all"
 
@@ -569,28 +569,70 @@ class InterviewsPageMixin:
     # ------------------------------------------------------------ Refresh
     def refresh_interviews(self):
         try:
-            records = self._iv_records
-            scheduled = [r for r in records if r["status"] == "Scheduled"]
-            completed = [r for r in records if r["status"] == "Completed"]
+            from app.repositories.interview_repository import InterviewRepository
+            db_records = InterviewRepository.get_all()
+
+            # Map DB records to the internal dict format the UI expects
+            self._iv_records = []
+            for r in db_records:
+                scheduled_at = r.get("scheduled_at")
+                if isinstance(scheduled_at, str):
+                    from datetime import datetime as _dt
+                    scheduled_at = _dt.fromisoformat(scheduled_at)
+
+                # Map DB status to UI status strings
+                db_status = (r.get("status") or "").upper()
+                if db_status == "SCHEDULED":
+                    ui_status = "Scheduled"
+                elif db_status in ("COMPLETED",):
+                    ui_status = "Completed"
+                else:
+                    ui_status = db_status.title().replace("_", " ")
+
+                # Map DB result to UI result strings
+                db_result = (r.get("result") or "").upper()
+                if db_result == "PASSED":
+                    ui_result = "Recommended"
+                elif db_result == "FAILED":
+                    ui_result = "Not recommended"
+                elif db_result == "FOR_FURTHER_REVIEW":
+                    ui_result = "For deliberation"
+                else:
+                    ui_result = "Not recorded"
+
+                self._iv_records.append({
+                    "interview_id": r.get("interview_id"),
+                    "application_id": r.get("application_id"),
+                    "name": r.get("applicant_name") or "—",
+                    "ref": r.get("reference_no") or str(r.get("application_id", "")),
+                    "when": scheduled_at,
+                    "interviewer": r.get("location") or "LYDO office",
+                    "status": ui_status,
+                    "result": ui_result,
+                    "remarks": r.get("remarks") or "",
+                })
+        except Exception as error:
+            self.show_error("Interviews", error)
+            return
+
+        try:
+            scheduled = [r for r in self._iv_records if r["status"] == "Scheduled"]
+            completed = [r for r in self._iv_records if r["status"] == "Completed"]
             awaiting = [r for r in completed if r["result"] == "Recommended"]
 
             self._iv_stat_scheduled.setText(str(len(scheduled)))
             self._iv_stat_completed.setText(str(len(completed)))
             self._iv_stat_awaiting.setText(str(len(awaiting)))
 
-            self._iv_tab_buttons["all"].setText(
-                f"All interviews  {len(records)}")
-            self._iv_tab_buttons["upcoming"].setText(
-                f"Upcoming  {len(scheduled)}")
-            self._iv_tab_buttons["completed"].setText(
-                f"Completed  {len(completed)}")
+            self._iv_tab_buttons["all"].setText(f"All interviews  {len(self._iv_records)}")
+            self._iv_tab_buttons["upcoming"].setText(f"Upcoming  {len(scheduled)}")
+            self._iv_tab_buttons["completed"].setText(f"Completed  {len(completed)}")
 
             self._iv_fill_next_day(scheduled)
-            self._iv_populate_filters(records)
+            self._iv_populate_filters(self._iv_records)
 
-            if not any(r["ref"] == self._iv_selected for r in records):
-                first = completed[0] if completed else (
-                    records[0] if records else None)
+            if not any(r["ref"] == self._iv_selected for r in self._iv_records):
+                first = completed[0] if completed else (self._iv_records[0] if self._iv_records else None)
                 self._iv_selected = first["ref"] if first else None
 
             self._iv_render_rows()
@@ -813,7 +855,22 @@ class InterviewsPageMixin:
             )
             return
 
-        # In-memory only. Save to the database here when it is connected.
+        # Map UI result back to DB result and persist to database
+        result_map = {
+            "Recommended": "PASSED",
+            "Not recommended": "FAILED",
+            "For deliberation": "FOR_FURTHER_REVIEW",
+        }
+        db_result = result_map.get(result)
+        if db_result and record.get("interview_id"):
+            try:
+                from app.repositories.interview_repository import InterviewRepository
+                InterviewRepository.update_result(
+                    record["interview_id"], db_result, remarks
+                )
+            except Exception as save_error:
+                self.show_error("Save result", save_error)
+                return
         record["status"] = "Completed"
         record["result"] = result
         record["remarks"] = remarks
@@ -883,8 +940,28 @@ class InterviewsPageMixin:
             picked_time.hour(), picked_time.minute(),
         )
 
-        # In-memory only. Save to the database here when it is connected.
+        # Try to save to the database
+        interview_id = None
+        app_id_from_ref = None
+        try:
+            import re as _re
+            m = _re.match(r"APP-\d+-(\d+)", app_no)
+            if m:
+                app_id_from_ref = int(m.group(1))
+            if app_id_from_ref:
+                from app.repositories.interview_repository import InterviewRepository as _IR
+                interview_id = _IR.create(
+                    application_id=app_id_from_ref,
+                    scheduled_at=when,
+                    location=interviewer,
+                    remarks="LYDO office",
+                )
+        except Exception:
+            pass  # fall back gracefully
+
         self._iv_records.append({
+            "interview_id": interview_id,
+            "application_id": app_id_from_ref,
             "name": applicant, "ref": app_no, "when": when,
             "interviewer": interviewer, "status": "Scheduled",
             "result": "Not recorded", "remarks": "LYDO office",

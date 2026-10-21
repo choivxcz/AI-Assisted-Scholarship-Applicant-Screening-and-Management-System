@@ -26,6 +26,8 @@ from app.repositories.screening_result_repository import (
 from app.services.screening_persistence_service import (
     ScreeningPersistenceService,
 )
+from app.services.application_service import ApplicationService
+from app.ui.applicant_details_dialog import show_applicant_details
 
 # Signed-in user shown in the optional top bar: (name, role, initials)
 CURRENT_USER = ("Mika Reyes", "LYDO Administrator", "MR")
@@ -661,12 +663,49 @@ class MLScreeningPageMixin:
         return row
 
     def _ml_endorse_clicked(self):
-        QMessageBox.information(
+        application_id = self._ml_selected_id
+        if application_id is None:
+            QMessageBox.warning(
+                self, "No Application Selected",
+                "Select an application first.",
+            )
+            return
+
+        application = ApplicationRepository.get_by_id(application_id)
+        if application is None:
+            QMessageBox.warning(
+                self, "Application Not Found",
+                "Refresh the list and try again.",
+            )
+            return
+
+        answer = QMessageBox.question(
             self,
             "Endorse for interview",
-            "Endorsement is not connected yet. Hook this button to your "
-            "interview workflow.",
+            "Save this application with status FOR INTERVIEW?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
         )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+
+        try:
+            changed = ApplicationService.change_status(
+                application_id, "FOR_INTERVIEW"
+            )
+            if not changed:
+                raise RuntimeError("The application status was not updated.")
+            self.refresh_ml_screening_applications()
+            if hasattr(self, "refresh_applications"):
+                self.refresh_applications()
+            if hasattr(self, "refresh_dashboard"):
+                self.refresh_dashboard()
+            QMessageBox.information(
+                self, "Endorsed for interview",
+                "The application was saved with status FOR INTERVIEW.",
+            )
+        except Exception as error:
+            self.show_error("Endorsement", error)
 
     # --------------------------------------------------------- filter menu
     def _ml_rebuild_filter_menu(self, advisory_values):
@@ -759,9 +798,13 @@ class MLScreeningPageMixin:
 
     @staticmethod
     def _result_to_cache(result):
+        """Normalize a newly saved screening result for the page cache."""
         return {
             "screening_id": result["screening_id"],
             "model_version_id": result["model_version_id"],
+            "screening_input_fingerprint": result.get(
+                "screening_input_fingerprint"
+            ),
             "predicted_class": result["predicted_class"],
             "model_prediction": result["model_prediction"],
             "confidence_score": result["model_probability_percent"] / 100.0,
@@ -775,7 +818,7 @@ class MLScreeningPageMixin:
         }
 
     def _run_screening_for_all(self, force_rescreen=False):
-        """Screen active applications and report individual failures."""
+        """Screen only applications with changed inputs or model versions."""
         try:
             applications = ApplicationRepository.get_all()
 
@@ -788,21 +831,38 @@ class MLScreeningPageMixin:
 
             service = ScreeningPersistenceService()
             completed = 0
+            unchanged = 0
             failures = []
 
             for application in applications:
                 application_id = int(application["application_id"])
 
                 try:
+                    applicant_data = self._build_screening_input(application)
+                    current_fingerprint = service.create_input_fingerprint(
+                        applicant_data
+                    )
                     existing = self._ml_current_results.get(application_id)
 
-                    if (
-                        not force_rescreen
-                        and existing
+                    fingerprint_matches = (
+                        existing is not None
+                        and existing.get("screening_input_fingerprint")
+                        == current_fingerprint
+                    )
+                    model_version_matches = (
+                        existing is not None
                         and existing.get("model_version_id")
                         == service.model_version_id
-                    ):
-                        continue
+                    )
+
+                    
+                    if not force_rescreen and existing is not None:
+                        # Skip only when the saved fingerprint and model version match.
+                        # Missing fingerprints need a new result to establish a baseline.
+                        if fingerprint_matches and model_version_matches:
+                            unchanged += 1
+                            continue
+
 
                     result = self._screen_application_record(
                         application,
@@ -822,7 +882,8 @@ class MLScreeningPageMixin:
 
             summary = (
                 f"Loaded {len(applications)} active application(s). "
-                f"New screenings saved: {completed}."
+                f"New screenings saved: {completed}. "
+                f"Unchanged applications skipped: {unchanged}."
             )
 
             if failures:
@@ -840,7 +901,7 @@ class MLScreeningPageMixin:
             self.show_error("ML Screening", error)
 
     def refresh_ml_screening_applications(self):
-        """Load active applications and their latest screening results."""
+        """Load latest results, then screen only changed applications."""
         try:
             applications = ApplicationRepository.get_all()
 
@@ -860,19 +921,15 @@ class MLScreeningPageMixin:
                 )
             )
 
-            for application_id, result in latest_results.items():
-                if application_id not in self._ml_current_results:
-                    self._ml_current_results[application_id] = result
+            # Always refresh the cache from the database. This also picks up
+            # screenings created by another session and prevents stale results.
+            self._ml_current_results = dict(latest_results)
+            self._ml_auto_screen_done = True
 
-            # Screen every application automatically on the first visit
-            # during this application session.
-            if not self._ml_auto_screen_done:
-                self._ml_auto_screen_done = True
-                self._run_screening_for_all(force_rescreen=True)
-                return
-
-            # On later refreshes, screen applications that do not have
-            # a cached result for the currently registered model version.
+            # Refresh loads the latest saved results. Legacy results without
+            # fingerprints are preserved and skipped during automatic screening.
+            # A new record is created only when screening is explicitly requested
+            # or when a fingerprinted result has changed inputs or model version.
             self._run_screening_for_all(force_rescreen=False)
 
         except Exception as error:
@@ -1016,6 +1073,7 @@ class MLScreeningPageMixin:
 
             row = _MLResultRow(application_id, rec)
             row.clicked.connect(self._select_ml_application)
+            row.clicked.connect(self._show_ml_applicant_details)
             self.ml_rows_layout.addWidget(row)
             self._ml_rows[application_id] = row
 
@@ -1101,6 +1159,15 @@ class MLScreeningPageMixin:
         self.ml_screen_button.setEnabled(True)
         self.ml_endorse_button.setEnabled(True)
 
+    def _show_ml_applicant_details(self, application_id):
+        application = ApplicationRepository.get_by_id(application_id)
+        if application is None:
+            return
+        try:
+            show_applicant_details(self, int(application["applicant_id"]))
+        except Exception as error:
+            self.show_error("Applicant details", error)
+
     def screen_selected_application(self):
         application_id = self._ml_selected_id
 
@@ -1122,21 +1189,44 @@ class MLScreeningPageMixin:
             )
             return
 
-        answer = QMessageBox.question(
-            self,
-            "Screen Selected Application",
-            f"Run screening for application {application_id}? "
-            "A new screening record will be saved.",
-            QMessageBox.StandardButton.Yes
-            | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No,
-        )
-
-        if answer != QMessageBox.StandardButton.Yes:
-            return
-
         try:
             service = ScreeningPersistenceService()
+            applicant_data = self._build_screening_input(application)
+            current_fingerprint = service.create_input_fingerprint(
+                applicant_data
+            )
+            existing = self._ml_current_results.get(application_id)
+
+            if (
+                existing is not None
+                and existing.get("screening_input_fingerprint")
+                == current_fingerprint
+                and existing.get("model_version_id")
+                == service.model_version_id
+            ):
+                QMessageBox.information(
+                    self,
+                    "Screening Up to Date",
+                    "This application has no changes to its screening inputs "
+                    "and is already screened with the current model. "
+                    "No duplicate screening record was created.",
+                )
+                return
+
+            answer = QMessageBox.question(
+                self,
+                "Screen Selected Application",
+                f"Screening inputs for application {application_id} have "
+                "changed or have no fingerprint baseline. Save a new "
+                "screening record?",
+                QMessageBox.StandardButton.Yes
+                | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+
+            if answer != QMessageBox.StandardButton.Yes:
+                return
+
             result = self._screen_application_record(application, service)
 
             self._ml_current_results[application_id] = (

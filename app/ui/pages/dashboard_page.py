@@ -14,7 +14,7 @@ from PyQt6.QtWidgets import (
 
 from app.repositories.application_repository import ApplicationRepository
 
-USE_SAMPLE_DATA = True  # True = exact numbers from the mockup
+USE_SAMPLE_DATA = False  # False = live data from the MySQL database
 
 # status -> (label, background, text)
 STATUS_STYLES = {
@@ -291,7 +291,7 @@ class DashboardPageMixin:
         titles.setSpacing(3)
         title = QLabel("Recent applications")
         title.setObjectName("panel_title")
-        sub = QLabel("Latest sample records and official statuses")
+        sub = QLabel("Latest records and official statuses")
         sub.setObjectName("muted")
         titles.addWidget(title)
         titles.addWidget(sub)
@@ -379,62 +379,75 @@ class DashboardPageMixin:
     # ------------------------------------------------------------ Refresh
     def refresh_dashboard(self):
         try:
-            data = SAMPLE if USE_SAMPLE_DATA else self._load_dashboard_data()
-
-            self.sample_chip.setVisible(USE_SAMPLE_DATA)
+            data = self._load_dashboard_data()
+            self.sample_chip.setVisible(False)
             self.top_date.setText(data["date"])
-
             self.application_count.value_label.setText(str(data["total"]))
             self.review_count.value_label.setText(str(data["awaiting"]))
             self.interview_count.value_label.setText(str(data["queue"]))
             self.approved_count.value_label.setText(str(data["approved"]))
-
             self._fill_recent(data["recent"], data["outcome"])
             self._fill_interviews(data["interviews"], data["interview_day"])
-
         except Exception as error:
             self.show_error("Dashboard", error)
 
     def _load_dashboard_data(self):
-        applications = ApplicationRepository.get_all()
+        from database.connection import get_connection
+        from app.repositories.interview_repository import InterviewRepository
 
-        counts = {}
-        for item in applications:
-            counts[item.get("status")] = counts.get(item.get("status"), 0) + 1
+        conn = get_connection()
+        try:
+            with conn.cursor(dictionary=True) as cursor:
+                # Stat counts
+                cursor.execute("""
+                    SELECT status, COUNT(*) AS cnt
+                    FROM applications
+                    WHERE is_archived = FALSE
+                    GROUP BY status
+                """)
+                counts = {row["status"]: row["cnt"] for row in cursor.fetchall()}
 
-        recent_src = sorted(
-            applications,
-            key=lambda a: str(a.get("submitted_at") or a.get("created_at") or ""),
-            reverse=True,
-        )[:5]
+                # Recent 5 applications with applicant name + barangay
+                cursor.execute("""
+                    SELECT
+                        CONCAT_WS(' ', p.first_name, p.middle_name, p.last_name) AS applicant_name,
+                        p.barangay,
+                        app.submitted_at,
+                        app.created_at,
+                        app.status
+                    FROM applications app
+                    INNER JOIN applicants p ON p.applicant_id = app.applicant_id
+                    WHERE app.is_archived = FALSE AND p.is_archived = FALSE
+                    ORDER BY COALESCE(app.submitted_at, app.created_at) DESC
+                    LIMIT 5
+                """)
+                recent_src = cursor.fetchall()
+        finally:
+            conn.close()
+
         recent = [
             (
-                a.get("applicant_name") or a.get("full_name") or "—",
-                a.get("barangay") or "—",
-                self._format_date(a.get("submitted_at") or a.get("created_at")),
-                a.get("status"),
+                row.get("applicant_name") or "—",
+                row.get("barangay") or "—",
+                self._format_date(row.get("submitted_at") or row.get("created_at")),
+                row.get("status"),
             )
-            for a in recent_src
+            for row in recent_src
+        ]
+
+        today_interviews = InterviewRepository.get_today()
+        interviews = [
+            (
+                str(r["scheduled_at"].strftime("%H:%M")) if r.get("scheduled_at") else "—",
+                r.get("applicant_name") or "—",
+                f"{r.get('reference_no', '')} · {r.get('location', 'LYDO office')}",
+            )
+            for r in today_interviews[:3]
         ]
 
         today = datetime.now()
-        todays = sorted(
-            (a for a in applications
-             if str(a.get("interview_date") or "").startswith(
-                 today.strftime("%Y-%m-%d"))),
-            key=lambda a: str(a.get("interview_time") or ""),
-        )[:3]
-        interviews = [
-            (
-                str(a.get("interview_time") or "—")[:5],
-                a.get("applicant_name") or a.get("full_name") or "—",
-                f"{a.get('reference_no', '')} · {a.get('interviewer', '')}",
-            )
-            for a in todays
-        ]
-
         return {
-            "total": len(applications),
+            "total": sum(counts.values()),
             "awaiting": counts.get("UNDER_REVIEW", 0),
             "queue": counts.get("FOR_INTERVIEW", 0),
             "approved": counts.get("APPROVED", 0),

@@ -36,6 +36,7 @@ from app.repositories.application_repository import ApplicationRepository
 from app.services.application_service import ApplicationService
 from app.ui.forms.applicant_form import ApplicantForm
 from app.ui.forms.unified_registration_form import UnifiedRegistrationForm
+from app.ui.applicant_details_dialog import show_applicant_details
 
 
 # ---------------------------------------------------------------- palette
@@ -490,6 +491,9 @@ class ApplicantsPageMixin:
         self.applicants_table.itemSelectionChanged.connect(
             self._update_selection_bar
         )
+        self.applicants_table.cellClicked.connect(
+            self._applicant_cell_clicked
+        )
 
         self.applicants_panel_layout = panel_layout
         panel_layout.addWidget(self.applicants_table, 1)
@@ -766,6 +770,20 @@ class ApplicantsPageMixin:
         self.applicants_table.setCurrentCell(row, COL_ID)
         self.applicants_table.selectRow(row)
         action()
+
+    def _applicant_cell_clicked(self, row, column):
+        if column == COL_ACTIONS:
+            return
+        item = self.applicants_table.item(row, COL_ID)
+        if item is None:
+            return
+        applicant_id = item.data(ID_ROLE)
+        if applicant_id is None:
+            return
+        try:
+            show_applicant_details(self, int(applicant_id))
+        except Exception as error:
+            self.show_error("Applicant details", error)
 
     # ------------------------------------------------------------------
     # Registration
