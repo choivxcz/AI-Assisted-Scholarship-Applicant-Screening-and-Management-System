@@ -29,6 +29,7 @@ RESULT_PLACEHOLDER = "Select result"
 
 # status / result -> (background, text)
 STATUS_STYLES = {
+    "Awaiting schedule": ("#FEF3D6", "#B45309"),
     "Scheduled": ("#DBEAFE", "#1D4ED8"),
     "Completed": ("#BFDBFE", "#1E40AF"),
 }
@@ -99,6 +100,12 @@ QPushButton#iv_secondary { background: #ffffff; border: 1px solid #dbe2ea;
     border-radius: 6px; padding: 9px 16px; font-weight: 600; font-size: 9pt;
     color: #0f172a; }
 QPushButton#iv_secondary:hover { background: #f1f5f9; }
+QPushButton#iv_row_action { background: #EFF6FF; border: 1px solid #DBEAFE;
+    border-radius: 4px; padding: 4px 10px; font-weight: 600; font-size: 8pt;
+    color: #1D4ED8; }
+QPushButton#iv_row_action:hover { background: #DBEAFE; }
+QPushButton#iv_row_action:disabled { background: #f1f5f9; border-color: #e2e8f0;
+    color: #94a3b8; }
 
 /* summary cards */
 QFrame#iv_next_card { background: #173B70; border: none; border-radius: 6px; }
@@ -303,16 +310,9 @@ class InterviewsPageMixin:
         refresh.setCursor(Qt.CursorShape.PointingHandCursor)
         refresh.clicked.connect(self.refresh_interviews)
 
-        schedule = QPushButton("Schedule interview")
-        schedule.setObjectName("iv_primary")
-        schedule.setCursor(Qt.CursorShape.PointingHandCursor)
-        schedule.clicked.connect(self.open_schedule_interview)
-
         row.addLayout(text)
         row.addStretch()
         row.addWidget(refresh, alignment=Qt.AlignmentFlag.AlignTop)
-        row.addSpacing(10)
-        row.addWidget(schedule, alignment=Qt.AlignmentFlag.AlignTop)
         return row
 
     def _iv_create_summary(self):
@@ -400,7 +400,7 @@ class InterviewsPageMixin:
         self._iv_tab_group = QButtonGroup(self)
         self._iv_tab_group.setExclusive(True)
         self._iv_tab_buttons = {}
-        for key in ("all", "upcoming", "completed"):
+        for key in ("all", "awaiting", "upcoming", "completed"):
             button = QPushButton("")
             button.setObjectName("iv_tab")
             button.setCheckable(True)
@@ -458,7 +458,8 @@ class InterviewsPageMixin:
         for text, stretch in (
             ("APPLICANT / APPLICATION", 220), ("DATE / TIME · 2026", 160),
             ("INTERVIEWER", 140), ("INTERVIEW STATUS", 140),
-            ("RESULT", 150), ("OFFICIAL REMARKS", 320),
+            ("RESULT", 150), ("OFFICIAL REMARKS", 260),
+            ("SCHEDULE", 120),
         ):
             label = QLabel(text)
             label.setObjectName("iv_th")
@@ -571,6 +572,7 @@ class InterviewsPageMixin:
         try:
             from app.repositories.interview_repository import InterviewRepository
             db_records = InterviewRepository.get_all()
+            awaiting_schedule = InterviewRepository.get_awaiting_schedule()
 
             # Map DB records to the internal dict format the UI expects
             self._iv_records = []
@@ -611,11 +613,29 @@ class InterviewsPageMixin:
                     "result": ui_result,
                     "remarks": r.get("remarks") or "",
                 })
+
+            # Endorsed from ML Screening but not scheduled yet.
+            for r in awaiting_schedule:
+                self._iv_records.append({
+                    "interview_id": None,
+                    "application_id": r.get("application_id"),
+                    "name": r.get("applicant_name") or "—",
+                    "ref": r.get("reference_no") or str(r.get("application_id", "")),
+                    "when": None,
+                    "interviewer": "Unassigned",
+                    "status": "Awaiting schedule",
+                    "result": "Not recorded",
+                    "remarks": "Endorsed for interview · Needs schedule",
+                })
         except Exception as error:
             self.show_error("Interviews", error)
             return
 
         try:
+            awaiting_schedule = [
+                r for r in self._iv_records
+                if r["status"] == "Awaiting schedule"
+            ]
             scheduled = [r for r in self._iv_records if r["status"] == "Scheduled"]
             completed = [r for r in self._iv_records if r["status"] == "Completed"]
             awaiting = [r for r in completed if r["result"] == "Recommended"]
@@ -625,6 +645,8 @@ class InterviewsPageMixin:
             self._iv_stat_awaiting.setText(str(len(awaiting)))
 
             self._iv_tab_buttons["all"].setText(f"All interviews  {len(self._iv_records)}")
+            self._iv_tab_buttons["awaiting"].setText(
+                f"Awaiting schedule  {len(awaiting_schedule)}")
             self._iv_tab_buttons["upcoming"].setText(f"Upcoming  {len(scheduled)}")
             self._iv_tab_buttons["completed"].setText(f"Completed  {len(completed)}")
 
@@ -671,8 +693,12 @@ class InterviewsPageMixin:
     def _iv_populate_filters(self, records):
         interviewers = ["All interviewers"] + sorted(
             {r["interviewer"] for r in records})
-        months = []
-        for record in sorted(records, key=lambda r: r["when"], reverse=True):
+        months = ["All months"]
+        for record in sorted(
+            (r for r in records if r["when"] is not None),
+            key=lambda r: r["when"],
+            reverse=True,
+        ):
             label = _month_label(record["when"])
             if label not in months:
                 months.append(label)
@@ -699,13 +725,22 @@ class InterviewsPageMixin:
 
         rows = []
         for record in self._iv_records:
+            if self._iv_tab == "awaiting" and record["status"] != "Awaiting schedule":
+                continue
             if self._iv_tab == "upcoming" and record["status"] != "Scheduled":
                 continue
             if self._iv_tab == "completed" and record["status"] != "Completed":
                 continue
             if who and who != "All interviewers" and record["interviewer"] != who:
                 continue
-            if month and _month_label(record["when"]) != month:
+            if (
+                month
+                and month != "All months"
+                and (
+                    record["when"] is None
+                    or _month_label(record["when"]) != month
+                )
+            ):
                 continue
             if text and text not in record["name"].lower() \
                     and text not in record["ref"].lower():
@@ -713,7 +748,13 @@ class InterviewsPageMixin:
             rows.append(record)
 
         return sorted(
-            rows, key=lambda r: (-r["when"].toordinal(), r["when"].time()))
+            rows,
+            key=lambda r: (
+                r["when"] is not None,
+                r["when"] or datetime.min,
+            ),
+            reverse=True,
+        )
 
     def _iv_clear_layout(self, layout):
         while layout.count():
@@ -760,7 +801,12 @@ class InterviewsPageMixin:
             who_layout.addWidget(ref)
             who_layout.addStretch()
 
-            when = QLabel(_fmt_short(record["when"]))
+            when_text = (
+                _fmt_short(record["when"])
+                if record["when"] is not None
+                else "Not yet scheduled"
+            )
+            when = QLabel(when_text)
             when.setObjectName("iv_cell_text")
             interviewer = QLabel(record["interviewer"])
             interviewer.setObjectName("iv_cell_text")
@@ -772,7 +818,8 @@ class InterviewsPageMixin:
             row.addWidget(interviewer, 140)
             row.addWidget(self._iv_pill(record["status"], STATUS_STYLES), 140)
             row.addWidget(self._iv_pill(record["result"], RESULT_STYLES), 150)
-            row.addWidget(remarks, 320)
+            row.addWidget(remarks, 260)
+            row.addWidget(self._iv_action_cell(record), 120)
             self._iv_rows.addWidget(frame)
 
         self._iv_count_note.setText(
@@ -792,6 +839,32 @@ class InterviewsPageMixin:
         row.addStretch()
         return wrapper
 
+    def _iv_action_cell(self, record):
+        if record["when"] is None:
+            text, enabled = "Schedule", True
+        elif record["status"] == "Completed":
+            text, enabled = "Completed", False
+        else:
+            text, enabled = "Scheduled", False
+
+        button = QPushButton(text)
+        button.setObjectName("iv_row_action")
+        button.setFixedHeight(28)
+        button.setEnabled(enabled)
+        if enabled:
+            button.setCursor(Qt.CursorShape.PointingHandCursor)
+            button.clicked.connect(
+                lambda _checked=False, r=record:
+                self.open_schedule_interview(r))
+
+        wrapper = QWidget()
+        wrapper.setStyleSheet("background: transparent;")
+        row = QHBoxLayout(wrapper)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.addWidget(button, 0, Qt.AlignmentFlag.AlignVCenter)
+        row.addStretch()
+        return wrapper
+
     def _iv_select(self, ref):
         self._iv_selected = ref
         self._iv_render_rows()
@@ -806,7 +879,7 @@ class InterviewsPageMixin:
 
     def _iv_fill_result_panel(self):
         record = self._iv_get_selected()
-        enabled = record is not None
+        enabled = record is not None and record["when"] is not None
         self._iv_result_combo.setEnabled(enabled)
         self._iv_result_remarks.setEnabled(enabled)
         self._iv_record_button.setEnabled(enabled)
@@ -821,8 +894,13 @@ class InterviewsPageMixin:
             return
 
         self._iv_result_title.setText(f"Interview result · {record['name']}")
+        when_text = (
+            _fmt_long(record["when"])
+            if record["when"] is not None
+            else "Not yet scheduled"
+        )
         self._iv_result_meta.setText(
-            f"{record['ref']} · {_fmt_long(record['when'])} · "
+            f"{record['ref']} · {when_text} · "
             f"Interviewer: {record['interviewer']}"
         )
 
@@ -842,6 +920,14 @@ class InterviewsPageMixin:
     def _iv_record_result(self):
         record = self._iv_get_selected()
         if record is None:
+            return
+
+        if record["when"] is None:
+            QMessageBox.warning(
+                self,
+                "Interview result",
+                "Schedule this interview before recording a result.",
+            )
             return
 
         result = self._iv_result_combo.currentText()
@@ -877,7 +963,7 @@ class InterviewsPageMixin:
         self.refresh_interviews()
 
     # ------------------------------------------------- Schedule interview
-    def open_schedule_interview(self):
+    def open_schedule_interview(self, record=None):
         dialog = QDialog(self)
         dialog.setWindowTitle("Schedule interview")
         dialog.setMinimumWidth(420)
@@ -886,8 +972,16 @@ class InterviewsPageMixin:
         form.setContentsMargins(20, 20, 20, 20)
         form.setSpacing(12)
 
-        name = QLineEdit()
-        ref = QLineEdit()
+        if record is None:
+            record = self._iv_get_selected()
+        pending = (
+            record
+            if record is not None and record["when"] is None
+            else None
+        )
+
+        name = QLineEdit(pending["name"] if pending else "")
+        ref = QLineEdit(pending["ref"] if pending else "")
         ref.setPlaceholderText("APP-26-009")
 
         date = QDateEdit(QDate.currentDate())
@@ -899,7 +993,13 @@ class InterviewsPageMixin:
 
         who = QComboBox()
         who.setEditable(True)
-        who.addItems(sorted({r["interviewer"] for r in self._iv_records}))
+        who.addItems(sorted({
+            r["interviewer"]
+            for r in self._iv_records
+            if r["interviewer"] != "Unassigned"
+        }))
+        if not who.currentText():
+            who.setCurrentText("LYDO office")
 
         form.addRow("Applicant name", name)
         form.addRow("Application no.", ref)
@@ -928,7 +1028,10 @@ class InterviewsPageMixin:
                 "Applicant name, application number and interviewer "
                 "are required.")
             return
-        if any(r["ref"] == app_no for r in self._iv_records):
+        if any(
+            r["ref"] == app_no and r["when"] is not None
+            for r in self._iv_records
+        ):
             QMessageBox.warning(
                 self, "Schedule interview",
                 f"{app_no} already has an interview record.")
@@ -943,12 +1046,19 @@ class InterviewsPageMixin:
         # Try to save to the database
         interview_id = None
         app_id_from_ref = None
-        try:
-            import re as _re
-            m = _re.match(r"APP-\d+-(\d+)", app_no)
-            if m:
-                app_id_from_ref = int(m.group(1))
-            if app_id_from_ref:
+        if pending is not None and pending["ref"] == app_no:
+            app_id_from_ref = pending["application_id"]
+        else:
+            try:
+                import re as _re
+                m = _re.match(r"APP-\d+-(\d+)", app_no)
+                if m:
+                    app_id_from_ref = int(m.group(1))
+            except (TypeError, ValueError):
+                app_id_from_ref = None
+
+        if app_id_from_ref:
+            try:
                 from app.repositories.interview_repository import InterviewRepository as _IR
                 interview_id = _IR.create(
                     application_id=app_id_from_ref,
@@ -956,8 +1066,9 @@ class InterviewsPageMixin:
                     location=interviewer,
                     remarks="LYDO office",
                 )
-        except Exception:
-            pass  # fall back gracefully
+            except Exception as save_error:
+                self.show_error("Schedule interview", save_error)
+                return
 
         self._iv_records.append({
             "interview_id": interview_id,

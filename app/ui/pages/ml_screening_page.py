@@ -34,6 +34,8 @@ CURRENT_USER = ("Mika Reyes", "LYDO Administrator", "MR")
 
 ALL_RESULTS = "All advisory results"
 
+ENDORSABLE_STATUSES = {"DRAFT", "SUBMITTED", "UNDER_REVIEW"}
+
 # ------------------------------------------------------------------ palette
 P = {
     "bg": "#F4F7FC",
@@ -109,6 +111,10 @@ QPushButton#ml_secondary { background: #FFFFFF; border: 1px solid #D5DEEB; borde
 QPushButton#ml_secondary:hover { background: $head; }
 QPushButton#ml_secondary:disabled { color: $faint; }
 QPushButton#ml_secondary::menu-indicator { image: none; width: 0px; }
+QPushButton#ml_row_action { background: $tint; border: 1px solid $tint_border;
+    border-radius: 4px; padding: 4px 10px; font-weight: 600; font-size: 8pt;
+    color: $primary; }
+QPushButton#ml_row_action:hover { background: #D6E4FF; }
 QMenu { background: #FFFFFF; border: 1px solid $border; padding: 4px; }
 QMenu::item { padding: 7px 22px; color: $text; font-size: 9pt; }
 QMenu::item:selected { background: $tint; color: $ink; }
@@ -182,6 +188,10 @@ def _repolish(w):
     w.style().polish(w)
 
 
+def _can_endorse(status):
+    return str(status or "").strip().upper() in ENDORSABLE_STATUSES
+
+
 def _advisory_kind(text):
     value = str(text or "").lower()
     if "reject" in value or "not qualified" in value:
@@ -231,8 +241,9 @@ class _StatusLabel(QLabel):
 
 class _MLResultRow(QFrame):
     clicked = pyqtSignal(int)
+    endorse_requested = pyqtSignal(int)
 
-    COLS = (170, 190, 130, 190, 190, 130, 130)
+    COLS = (170, 190, 130, 190, 190, 130, 130, 190)
 
     def __init__(self, application_id, rec):
         super().__init__()
@@ -289,6 +300,25 @@ class _MLResultRow(QFrame):
 
         self.link = _lbl("Open record →", "cell_link")
         h.addWidget(self.link, self.COLS[6])
+
+        self.endorse_button = QPushButton("Endorse for interview")
+        self.endorse_button.setObjectName("ml_row_action")
+        self.endorse_button.setFixedHeight(28)
+        if _can_endorse(rec.get("status")):
+            self.endorse_button.setCursor(Qt.CursorShape.PointingHandCursor)
+            self.endorse_button.clicked.connect(
+                lambda: self.endorse_requested.emit(self.application_id))
+        else:
+            self.endorse_button.setEnabled(False)
+            if str(rec.get("status") or "").strip().upper() == "FOR_INTERVIEW":
+                self.endorse_button.setText("Endorsed")
+        endorse_wrap = QWidget()
+        endorse_row = QHBoxLayout(endorse_wrap)
+        endorse_row.setContentsMargins(0, 0, 0, 0)
+        endorse_row.addWidget(
+            self.endorse_button, 0, Qt.AlignmentFlag.AlignVCenter)
+        endorse_row.addStretch()
+        h.addWidget(endorse_wrap, self.COLS[7])
 
     def set_selected(self, selected):
         self.setProperty("selected", selected)
@@ -532,6 +562,7 @@ class MLScreeningPageMixin:
                 "QUALIFIED PROBABILITY",
                 "LAST SCREENED",
                 "REVIEW",
+                "ENDORSE FOR INTERVIEW",
             ),
             _MLResultRow.COLS,
         ):
@@ -643,7 +674,8 @@ class MLScreeningPageMixin:
         self.ml_endorse_button.setObjectName("ml_primary")
         self.ml_endorse_button.setFixedHeight(38)
         self.ml_endorse_button.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.ml_endorse_button.clicked.connect(self._ml_endorse_clicked)
+        self.ml_endorse_button.clicked.connect(
+            lambda _checked=False: self._ml_endorse_clicked())
 
         self.ml_screen_button.setEnabled(False)
         self.ml_endorse_button.setEnabled(False)
@@ -662,8 +694,9 @@ class MLScreeningPageMixin:
         row.addWidget(_lbl("Santa Cruz, Laguna · LYDO", "ml_tiny"))
         return row
 
-    def _ml_endorse_clicked(self):
-        application_id = self._ml_selected_id
+    def _ml_endorse_clicked(self, application_id=None):
+        if application_id is None or isinstance(application_id, bool):
+            application_id = self._ml_selected_id
         if application_id is None:
             QMessageBox.warning(
                 self, "No Application Selected",
@@ -700,9 +733,12 @@ class MLScreeningPageMixin:
                 self.refresh_applications()
             if hasattr(self, "refresh_dashboard"):
                 self.refresh_dashboard()
+            if hasattr(self, "refresh_interviews"):
+                self.refresh_interviews()
             QMessageBox.information(
                 self, "Endorsed for interview",
-                "The application was saved with status FOR INTERVIEW.",
+                "The application was saved with status FOR INTERVIEW and "
+                "is now listed on the Interviews page, awaiting a schedule.",
             )
         except Exception as error:
             self.show_error("Endorsement", error)
@@ -1074,6 +1110,7 @@ class MLScreeningPageMixin:
             row = _MLResultRow(application_id, rec)
             row.clicked.connect(self._select_ml_application)
             row.clicked.connect(self._show_ml_applicant_details)
+            row.endorse_requested.connect(self._ml_endorse_clicked)
             self.ml_rows_layout.addWidget(row)
             self._ml_rows[application_id] = row
 
@@ -1157,7 +1194,7 @@ class MLScreeningPageMixin:
             panel.fill(rec)
         self.ml_notes.setText(rec["notes"])
         self.ml_screen_button.setEnabled(True)
-        self.ml_endorse_button.setEnabled(True)
+        self.ml_endorse_button.setEnabled(_can_endorse(rec["status"]))
 
     def _show_ml_applicant_details(self, application_id):
         application = ApplicationRepository.get_by_id(application_id)

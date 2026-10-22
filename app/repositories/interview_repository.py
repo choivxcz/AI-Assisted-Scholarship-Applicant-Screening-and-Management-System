@@ -51,6 +51,44 @@ class InterviewRepository:
             connection.close()
 
     @staticmethod
+    def get_awaiting_schedule():
+        """Returns endorsed applications that do not have an interview yet.
+
+        These are applications with status FOR_INTERVIEW but no row in the
+        interviews table. They appear on the Interviews page as awaiting a
+        schedule so endorsed applicants are never lost between pages.
+        """
+        query = """
+            SELECT
+                app.application_id,
+                app.applicant_id,
+                app.scholarship_program,
+                app.scholarship_year,
+                app.status AS application_status,
+                app.updated_at,
+                CONCAT_WS(' ', p.first_name, p.middle_name, p.last_name, p.suffix) AS applicant_name,
+                CONCAT('APP-', RIGHT(app.scholarship_year, 2), '-', LPAD(app.application_id, 3, '0')) AS reference_no
+            FROM applications app
+            INNER JOIN applicants p ON p.applicant_id = app.applicant_id
+            WHERE app.is_archived = FALSE
+              AND p.is_archived = FALSE
+              AND app.status = 'FOR_INTERVIEW'
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM interviews iv
+                  WHERE iv.application_id = app.application_id
+              )
+            ORDER BY app.updated_at DESC, app.application_id DESC
+        """
+        connection = get_connection()
+        try:
+            with connection.cursor(dictionary=True) as cursor:
+                cursor.execute(query)
+                return cursor.fetchall()
+        finally:
+            connection.close()
+
+    @staticmethod
     def get_by_id(interview_id):
         """Returns a single interview dict (joined to applicants+applications) or None."""
         query = _BASE_QUERY + " AND iv.interview_id = %s LIMIT 1"
