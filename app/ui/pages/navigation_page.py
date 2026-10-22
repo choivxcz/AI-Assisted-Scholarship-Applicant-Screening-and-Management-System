@@ -110,6 +110,12 @@ class NavigationPageMixin:
     def navigate(self, index):
         self.pages.setCurrentIndex(index)
 
+        if index == 4 and hasattr(self, "refresh_interviews"):
+            self.refresh_interviews()
+
+        if index == 5 and hasattr(self, "refresh_decisions"):
+            self.refresh_decisions()
+
         for i, button in enumerate(self.nav_buttons):
             button.setChecked(i == index)
 
