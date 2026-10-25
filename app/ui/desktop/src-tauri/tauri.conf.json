@@ -1,0 +1,12 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Iskolar ng Bayan",
+  "version": "1.0.0",
+  "identifier": "ph.iskolaringbayan.scholarship",
+  "build": { "beforeDevCommand": "npm run dev", "devUrl": "http://127.0.0.1:1420", "beforeBuildCommand": "npm run build", "frontendDist": "../dist" },
+  "app": {
+    "windows": [{ "title": "Iskolar ng Bayan | Scholarship Management", "width": 1440, "height": 900, "minWidth": 1120, "minHeight": 720, "center": true }],
+    "security": { "csp": "default-src 'self' asset: http://asset.localhost; connect-src ipc: http://ipc.localhost http://127.0.0.1:8765; img-src 'self' asset: http://asset.localhost data:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:" }
+  },
+  "bundle": { "active": true, "targets": ["nsis"], "category": "Business", "shortDescription": "Scholarship Applicant Screening and Management", "windows": { "webviewInstallMode": { "type": "downloadBootstrapper" } } }
+}
