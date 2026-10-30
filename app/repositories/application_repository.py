@@ -77,36 +77,40 @@ class ApplicationRepository:
         return number
 
     @classmethod
-    def _validate_application(cls, data):
+    def _validate_application(cls, data, *, partial=False):
         data = dict(data)
 
-        program = data.get("scholarship_program")
-        if not isinstance(program, str) or not program.strip():
-            raise ValueError("Scholarship program is required.")
-        data["scholarship_program"] = program.strip()
+        if not partial or "scholarship_program" in data:
+            program = data.get("scholarship_program")
+            if not isinstance(program, str) or not program.strip():
+                raise ValueError("Scholarship program is required.")
+            data["scholarship_program"] = program.strip()
 
-        year = cls._as_int(data.get("scholarship_year"), "Scholarship year")
-        if not 2000 <= year <= 2200:
-            raise ValueError("Scholarship year must be between 2000 and 2200.")
-        data["scholarship_year"] = year
+        if not partial or "scholarship_year" in data:
+            year = cls._as_int(data.get("scholarship_year"), "Scholarship year")
+            if not 2000 <= year <= 2200:
+                raise ValueError("Scholarship year must be between 2000 and 2200.")
+            data["scholarship_year"] = year
 
-        try:
-            average = float(data["academic_average"])
-        except (KeyError, TypeError, ValueError):
-            raise ValueError("Academic average must be a number.")
+        if not partial or "academic_average" in data:
+            try:
+                average = float(data["academic_average"])
+            except (KeyError, TypeError, ValueError):
+                raise ValueError("Academic average must be a number.")
 
-        if not 0 <= average <= 100:
-            raise ValueError("Academic average must be between 0 and 100.")
-        data["academic_average"] = average
+            if not 0 <= average <= 100:
+                raise ValueError("Academic average must be between 0 and 100.")
+            data["academic_average"] = average
 
-        try:
-            income = float(data["monthly_income"])
-        except (KeyError, TypeError, ValueError):
-            raise ValueError("Monthly income must be a number.")
+        if not partial or "monthly_income" in data:
+            try:
+                income = float(data["monthly_income"])
+            except (KeyError, TypeError, ValueError):
+                raise ValueError("Monthly income must be a number.")
 
-        if income < 0:
-            raise ValueError("Monthly income cannot be negative.")
-        data["monthly_income"] = income
+            if income < 0:
+                raise ValueError("Monthly income cannot be negative.")
+            data["monthly_income"] = income
 
         for field in cls.COUNT_FIELDS:
             if field in data:
@@ -418,7 +422,7 @@ class ApplicationRepository:
                 + ", ".join(sorted(unknown))
             )
 
-        fields = cls._validate_application(fields)
+        fields = cls._validate_application(fields, partial=True)
 
         connection = get_connection()
         cursor = connection.cursor()

@@ -1,0 +1,54 @@
+/* Applications uses the same Inter typography and municipal palette as the reference. */
+.applications-page .stat-icon.amber { background: #FFF5DB; color: #996500; }
+.applications-page .stat-icon.green { background: #E8F7EF; color: #13835F; }
+.applications-page .applicant-directory-layout.with-profile { grid-template-columns: minmax(0, 2.7fr) minmax(340px, 1fr); }
+.applications-page .application-table { min-width: 840px; }
+.application-table th:first-child { width: 16%; }
+.application-table th:nth-child(2) { width: 14%; }
+.application-table th:nth-child(3) { width: 14%; }
+.application-table th:nth-child(4) { width: 14%; }
+.application-table th:nth-child(5) { width: 14%; }
+.application-table th:nth-child(6) { width: 14%; }
+.application-table th:last-child { width: 14%; }
+.applications-page .application-table td { padding-top: 12px!important; padding-bottom: 12px!important; }
+.application-status { font-size: 12px; font-weight: 500; }
+.application-status.review { color: #996500; }
+.application-status.interview { color: #7548CD; }
+.application-status.approved { color: #13835F; }
+.application-status.rejected { color: #C92E4B; }
+.application-status.submitted { color: #14264A; }
+.application-stage-badge { display: inline-block; margin-bottom: 8px; border-radius: 5px; padding: 4px 7px; font-size: 11px; background: #EEF5FF; }
+.application-stage-badge.review { background: #FFF5DB; }
+.application-stage-badge.interview { background: #F2EEFF; }
+.application-stage-badge.approved { background: #E8F7EF; }
+.application-stage-badge.rejected { background: #FFF0F1; }
+.application-profile .applicant-tabs { column-gap: 3px; row-gap: 3px; margin-bottom: 12px; }
+.application-profile .applicant-tabs button { padding: 8px 7px; font-size: 11px; }
+.application-overview-fields { margin: 0 0 12px; padding-bottom: 5px; border-bottom: 1px solid #DBE6F5; }
+.application-overview-fields>div { display: grid; grid-template-columns: 1fr 1.05fr; margin: 9px 0; gap: 12px; font-size: 11px; line-height: 1.35; }
+.application-overview-fields dd { margin: 0; color: #14264A; overflow-wrap: anywhere; }
+.application-profile-link { display: inline; color: #14264A; background: none; padding: 0; border: 0; font-size: 11px; text-align: left; cursor: pointer; }
+.application-profile-link:hover { color: #115DF4; }
+.application-profile-link svg { display: inline; vertical-align: middle; }
+.application-timeline { padding-bottom: 12px; margin-bottom: 10px; border-bottom: 1px solid #DBE6F5; }
+.application-timeline h3 { margin: 0 0 12px; color: #115DF4; font-size: 10px; font-weight: 400; text-transform: uppercase; }
+.application-timeline>div { position: relative; display: flex; gap: 10px; align-items: flex-start; margin: 0; padding: 0 0 14px; }
+.application-timeline>div:last-child { padding-bottom: 0; }
+.application-timeline>div:not(:last-child):before { content: ''; position: absolute; left: 10px; top: 22px; bottom: 0; width: 1px; background: #DBE6F5; }
+.timeline-mark { display: grid; place-items: center; width: 22px; height: 22px; flex-shrink: 0; color: #115DF4; background: #EEF5FF; border-radius: 50%; }
+.timeline-mark.completed { color: #13835F; background: #E8F7EF; }
+.application-timeline strong { display: block; font-size: 11px; font-weight: 500; line-height: 1.4; }
+.application-timeline small { display: block; color: #667FA7; font-size: 10px; line-height: 1.35; }
+.application-profile .application-advisory { margin: 10px 0 8px; color: #667FA7; font-size: 11px; line-height: 1.35; }
+.application-profile-actions { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; }
+.application-profile-actions .button-secondary { font-size: 12px; padding: 8px 11px; }
+.application-more-actions { width: 100%; }
+.application-more-actions summary { padding: 4px 0; color: #667FA7; font-size: 11px; cursor: pointer; }
+.application-more-actions .button-secondary { margin: 6px 5px 0 0; }
+@media (min-width: 1001px) and (max-width: 1400px) {
+  .applications-page .applicant-directory-layout.with-profile { grid-template-columns: minmax(0, 2.4fr) minmax(290px, 1fr); }
+  .applications-page .application-table { min-width: 760px; }
+}
+@media (max-width: 1000px) {
+  .applications-page .applicant-directory-layout.with-profile { grid-template-columns: minmax(0, 1fr); }
+}

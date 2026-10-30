@@ -1,3 +1,13 @@
+import LoginPage from "./LoginPage";
+import ActivityLogPage from "./ActivityLogPage";
+import { apiFetch, getSessionToken, setSessionToken } from "./api";
+import OverviewPage from "./OverviewPage";
+import DecisionsPage from "./DecisionsPage";
+import SettingsPage from "./SettingsPage";
+import InterviewsPage from "./InterviewsPage";
+import ScreeningPage from "./ScreeningPage";
+import ApplicationsPage from "./ApplicationsPage";
+import ApplicantsPage from "./ApplicantsPage";
 
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import {
@@ -5,11 +15,11 @@ import {
   CheckCircle2, CircleHelp, Clock3, FileText, GraduationCap, LayoutDashboard,
   Menu, Plus, RefreshCw, Search, Settings2, ShieldCheck, Sparkles, Users, X,
   BrainCircuit, AlertCircle, LoaderCircle, Pencil, Archive, CalendarPlus,
-  ClipboardCheck, UserRoundPlus, ListChecks,
+  ClipboardCheck, UserRoundPlus, ListChecks, Bell, ChevronDown, PanelLeftClose, Eye, EyeOff, UserRound, FolderCheck, Play,
 } from "lucide-react";
 
 type Row = Record<string, any>;
-type PageKey = "Overview" | "Applicants" | "Applications" | "AI Screening" | "Interviews" | "Decisions";
+type PageKey = "Activity Log" | "Settings" | "Overview" | "Applicants" | "Applications" | "AI Screening" | "Interviews" | "Decisions";
 type Field = {
   key: string;
   label: string;
@@ -32,6 +42,8 @@ type FormState = {
   row?: Row;
 } | null;
 
+const requestedView = new URLSearchParams(window.location.search).get("view") || new URLSearchParams(window.location.search).get("preview");
+const initialPage: PageKey = requestedView === "activity" ? "Activity Log" : requestedView === "settings" ? "Settings" : requestedView === "decisions" ? "Decisions" : requestedView === "interviews" ? "Interviews" : requestedView === "screening" ? "AI Screening" : requestedView === "applications" ? "Applications" : requestedView === "applicants" ? "Applicants" : "Overview";
 const API = "http://127.0.0.1:8765/api";
 
 const nav: { label: PageKey; icon: typeof LayoutDashboard; group: string }[] = [
@@ -56,7 +68,7 @@ const dateText = (v: unknown) => {
   const d = new Date(String(v));
   return Number.isNaN(d.getTime())
     ? String(v)
-    : d.toLocaleDateString("en-PH", { month: "short", day: "numeric", year: "numeric" });
+    : d.toLocaleDateString("en-PH", { month: "short", day: "numeric", year: "numeric", timeZone: "Asia/Manila" });
 };
 
 const nameOf = (r: Row) =>
@@ -85,10 +97,21 @@ const scholarshipProgramOptions = [
 ];
 
 async function request<T = any>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`${API}${path}`, {
-    ...init,
-    headers: { "Content-Type": "application/json", ...(init?.headers || {}) },
-  });
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), 15000);
+  let response: Response;
+  try {
+    response = await apiFetch(`${API}${path}`, {
+      ...init,
+      signal: init?.signal || controller.signal,
+      headers: { ...(init?.body ? { "Content-Type": "application/json" } : {}), ...(init?.headers || {}) },
+    });
+  } catch (error) {
+    if (controller.signal.aborted) throw new Error("The Python backend did not respond within 15 seconds. Check the backend log and MySQL connection.");
+    throw new Error("Cannot reach the Python API at " + API + ". Check that the desktop backend is running and this UI origin is allowed. " + (error instanceof Error ? error.message : ""));
+  } finally {
+    window.clearTimeout(timeout);
+  }
   const data = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(data.error || `Request failed (${response.status})`);
   return data as T;
@@ -199,12 +222,19 @@ const applicationEditFields: Field[] = [
 ];
 
 export default function App() {
-  const [page, setPage] = useState<PageKey>("Overview");
+  const [user, setUser] = useState<Row | null>(null);
+  const [sessionLoading, setSessionLoading] = useState(true);
+  const [page, setPage] = useState<PageKey>(initialPage);
   const [mobileNav, setMobileNav] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [search, setSearch] = useState("");
   const [refreshKey, setRefreshKey] = useState(0);
   const [dashboard, setDashboard] = useState<Row | null>(null);
   const [rows, setRows] = useState<Row[]>([]);
+  const [applicantFocus, setApplicantFocus] = useState<number | null>(null);
+  const [allApplications, setAllApplications] = useState<Row[]>([]);
+  const [screeningFailures, setScreeningFailures] = useState<Record<string, string>>({});
+  const [academicYears, setAcademicYears] = useState<string[]>([]);
   const [applicationOptions, setApplicationOptions] = useState<{ label: string; value: string }[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -212,17 +242,21 @@ export default function App() {
   const [form, setForm] = useState<FormState>(null);
   const [formBusy, setFormBusy] = useState(false);
   const [toast, setToast] = useState("");
+  const [latestBatch, setLatestBatch] = useState<{ at: string; count: number } | null>(null);
 
   const load = useCallback(async () => {
+    if (page === "Settings") { setLoading(false); return; }
+    setRows([]); setDashboard(null); setAllApplications([]);
     setLoading(true);
     setError("");
     try {
       let health: { ok: boolean } | null = null;
       let healthError: unknown = null;
 
-      for (let attempt = 0; attempt < 15; attempt++) {
+      const startupDeadline = Date.now() + 30000;
+      while (Date.now() < startupDeadline) {
         try {
-          health = await request<{ ok: boolean }>("/health");
+          health = await request<{ ok: boolean }>("/health", { signal: AbortSignal.timeout(1500) });
           break;
         } catch (e) {
           healthError = e;
@@ -231,9 +265,7 @@ export default function App() {
       }
 
       if (!health) {
-        throw healthError instanceof Error
-          ? healthError
-          : new Error("Python bridge did not start.");
+        throw new Error("The Python backend at 127.0.0.1:8765 did not respond within 30 seconds. Restart the desktop app and check %TEMP%/iskolar-python-bridge.log. " + (healthError instanceof Error ? healthError.message : ""));
       }
 
       setBridgeOnline(health.ok);
@@ -244,6 +276,8 @@ export default function App() {
         setRows(d.recentApplications || []);
       } else {
         const endpoint: Record<PageKey, string> = {
+          "Activity Log": "/activity",
+          Settings: "/health",
           Overview: "/dashboard",
           Applicants: "/applicants",
           Applications: "/applications",
@@ -267,7 +301,10 @@ export default function App() {
         );
       }
 
+      if (page === "Activity Log") return;
       const apps = await request<{ items: Row[] }>("/applications");
+      setAllApplications(apps.items || []);
+      setAcademicYears([...new Set((apps.items || []).map(a => String(a.scholarship_year || "")).filter(Boolean))].sort().reverse());
       setApplicationOptions(
         (apps.items || []).map(a => ({
           label: `${a.application_id} · ${nameOf(a)} — ${a.scholarship_program || "Scholarship"}`,
@@ -282,17 +319,31 @@ export default function App() {
     }
   }, [page, refreshKey]);
 
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => {
+    const expired = () => { setUser(null); setRows([]); setDashboard(null); setAllApplications([]); setForm(null); };
+    window.addEventListener("iskolar-session-expired", expired);
+    if (getSessionToken()) {
+      request<{ user: Row }>("/auth/me").then(result => setUser(result.user)).catch(() => { setSessionToken(null); setUser(null); }).finally(() => setSessionLoading(false));
+    } else setSessionLoading(false);
+    return () => window.removeEventListener("iskolar-session-expired", expired);
+  }, []);
+  useEffect(() => { if (user) void load(); }, [load, user]);
+  useEffect(() => { window.scrollTo({ top: 0, behavior: "auto" }); }, [page]);
+  async function signIn(username: string, password: string) {
+    const result = await post("/auth/login", { username, password });
+    setSessionToken(result.token);
+    setUser(result.user);
+    setPage(initialPage);
+  }
+  async function signOut() {
+    try { await post("/auth/logout", {}); }
+    finally { setSessionToken(null); setUser(null); setRows([]); setDashboard(null); setAllApplications([]); setForm(null); }
+  }
   useEffect(() => {
     if (!toast) return;
     const id = window.setTimeout(() => setToast(""), 4500);
     return () => window.clearTimeout(id);
   }, [toast]);
-
-  const filtered = useMemo(
-    () => rows.filter(row => JSON.stringify(row).toLowerCase().includes(search.toLowerCase())),
-    [rows, search],
-  );
 
   const refresh = () => setRefreshKey(n => n + 1);
   const showError = (e: unknown) => setToast(e instanceof Error ? e.message : "The operation could not be completed.");
@@ -354,8 +405,19 @@ export default function App() {
       mode: "status",
       title: "Change application status",
       subtitle: "The existing ApplicationService validates allowed status transitions.",
-      fields: [{ key: "status", label: "New status", type: "select", required: true, options: statusOptions }],
+      fields: [{ key: "status", label: "New status", type: "select", required: true, options: statusOptions.filter(s => !["APPROVED", "REJECTED", "WAITLISTED"].includes(s.value)) }],
       initial: { status: row.status },
+      row,
+    });
+  }
+
+  function openEndorsement(row: Row) {
+    setForm({
+      mode: "status",
+      title: "Endorse for interview",
+      subtitle: "Confirm saving this application as For Interview. It will become available for scheduling. This is a human action, not an official scholarship award or rejection.",
+      fields: [{ key: "status", label: "New status", type: "select", required: true, options: [{ label: "For Interview", value: "FOR_INTERVIEW" }] }],
+      initial: { status: "FOR_INTERVIEW" },
       row,
     });
   }
@@ -371,12 +433,13 @@ export default function App() {
     });
   }
 
-  function openSchedule(row: Row) {
+  function openSchedule(row?: Row) {
     setForm({
       mode: "schedule",
       title: "Schedule an interview",
-      subtitle: `Schedule an interview for ${nameOf(row)}. Only FOR_INTERVIEW applications can be scheduled.`,
+      subtitle: row ? `Schedule an interview for ${nameOf(row)}. Only FOR_INTERVIEW applications can be scheduled.` : "Choose an endorsed application and coordinate the schedule and venue.",
       fields: [
+        ...(!row ? [{ key: "application_id", label: "Application", type: "select" as const, required: true, options: rows.filter(r => r.awaiting_schedule).map(r => ({ label: `${r.reference_no || r.application_id} - ${nameOf(r)}`, value: String(r.application_id) })) }] : []),
         { key: "scheduled_at", label: "Date & time", type: "datetime-local", required: true },
         { key: "location", label: "Location / venue" },
         { key: "remarks", label: "Notes", type: "textarea" },
@@ -408,25 +471,11 @@ export default function App() {
   }
 
   function openDecision(row?: Row) {
-    setForm({
-      mode: "decision",
-      title: "Record scholarship decision",
-      subtitle: "This saves the decision and updates the linked application status using your existing repository.",
-      fields: [
-        { key: "application_id", label: "Application", type: "select", required: true, options: applicationOptions },
-        {
-          key: "decision", label: "Decision", type: "select", required: true,
-          options: [
-            { label: "Approved", value: "APPROVED" },
-            { label: "Rejected", value: "REJECTED" },
-            { label: "Waitlisted", value: "WAITLISTED" },
-          ],
-        },
-        { key: "reason", label: "Reason / justification", type: "textarea", required: true },
-      ],
-      initial: { application_id: row?.application_id ? String(row.application_id) : "", decision: "APPROVED", reason: "" },
-      row,
-    });
+    setForm({ mode: "decision", title: "Record official decision", subtitle: "Confirm a human decision after reviewing the application and interview. Your signed-in identity and the server timestamp will be recorded in Activity Log.", fields: [
+      { key: "application_id", label: "Application", type: "select", required: true, options: applicationOptions },
+      { key: "decision", label: "Official decision", type: "select", required: true, options: ["APPROVED", "REJECTED", "WAITLISTED"].map(value => ({ value, label: nice(value) })) },
+      { key: "reason", label: "Required decision remarks", type: "textarea", required: true },
+    ], initial: { application_id: row?.application_id ? String(row.application_id) : "", decision: "", reason: "" }, row });
   }
 
   async function submitForm(values: Row) {
@@ -434,7 +483,15 @@ export default function App() {
     setFormBusy(true);
 
     try {
-      if (form.mode === "register") {
+      if (form.mode === "batchScreen") {
+        setScreeningFailures({});
+        for (const option of applicationOptions) {
+          try { await post("/screening", { application_id: Number(option.value) }); }
+          catch (e) { const message = e instanceof Error ? e.message : "Screening failed"; setScreeningFailures(previous => ({ ...previous, [option.value]: message })); }
+        }
+        setLatestBatch({ at: new Date().toISOString(), count: applicationOptions.length });
+        setToast("Batch finished. Review results in the screening table.");
+      } else if (form.mode === "register") {
         const applicantKeys = [
           "first_name", "middle_name", "last_name", "suffix", "birth_date", "sex",
           "email", "phone", "house_no_street", "barangay", "municipality", "province",
@@ -474,12 +531,13 @@ export default function App() {
         await put(`/applications/${form.row?.application_id}`, { status: values.status });
         setToast("Application status updated.");
       } else if (form.mode === "screen") {
-        const result = await post("/screening", { application_id: Number(values.application_id) });
-        setToast(`Screening saved for application #${values.application_id}. ${result.result?.predicted_class || "Review the result in AI Screening."}`);
+        await post("/screening", { application_id: Number(values.application_id) });
+        setScreeningFailures(previous => { const next = { ...previous }; delete next[String(values.application_id)]; return next; });
+        setToast(`Screening saved for application #${values.application_id}. Advisory only; official stage unchanged.`);
         setPage("AI Screening");
       } else if (form.mode === "schedule") {
         await post("/interviews", {
-          application_id: Number(form.row?.application_id),
+          application_id: Number(form.row?.application_id ?? values.application_id),
           scheduled_at: values.scheduled_at,
           location: values.location || null,
           remarks: values.remarks || null,
@@ -500,6 +558,7 @@ export default function App() {
       setForm(null);
       refresh();
     } catch (e) {
+      if (form.mode === "screen") setScreeningFailures(previous => ({ ...previous, [String(values.application_id)]: e instanceof Error ? e.message : "Screening failed" }));
       showError(e);
     } finally {
       setFormBusy(false);
@@ -518,17 +577,13 @@ export default function App() {
     }
   }
 
+  if (sessionLoading) return <main className="table-loading"><LoaderCircle className="spin" size={24} />Checking staff session...</main>;
+  if (!user) return <LoginPage onLogin={signIn} />;
+
   return (
-    <div className="app-shell">
+    <div className={`app-shell ${page === "Overview" || page === "Applicants" || page === "Applications" || page === "AI Screening" || page === "Interviews" ? "overview-shell" : ""} ${page === "Applicants" || page === "Applications" || page === "AI Screening" || page === "Interviews" ? "applicants-shell" : ""} ${page === "Interviews" || page === "Overview" || page === "AI Screening" ? "interviews-shell" : ""} ${page === "Overview" ? "reference-overview-shell" : ""} ${page === "AI Screening" ? "screening-reference-shell" : ""} ${sidebarCollapsed ? "sidebar-collapsed" : ""}`}>
       <aside className={`sidebar ${mobileNav ? "sidebar-open" : ""}`}>
-        <div className="brand">
-          <div className="brand-mark"><GraduationCap size={23} /></div>
-          <div>
-            <div className="brand-name">iskolar<span>.</span></div>
-            <div className="brand-sub">NG BAYAN · ADMIN</div>
-          </div>
-          <button className="icon-button mobile-close" onClick={() => setMobileNav(false)} aria-label="Close menu"><X size={18} /></button>
-        </div>
+        <div className="brand"><OfficialLogos /><div className="brand-name">iskolar.</div><div className="brand-sub">NG BAYAN / SANTA CRUZ<br />Local Youth Development Office</div></div>
         <div className="sidebar-divider" />
         {(["WORKSPACE", "MANAGEMENT"] as const).map(group => (
           <div className="nav-group" key={group}>
@@ -538,6 +593,8 @@ export default function App() {
               return (
                 <button
                   key={item.label}
+                  aria-label={item.label}
+                  title={sidebarCollapsed ? item.label : undefined}
                   className={`nav-item ${page === item.label ? "active" : ""}`}
                   onClick={() => { setPage(item.label); setSearch(""); setMobileNav(false); }}
                 >
@@ -549,18 +606,11 @@ export default function App() {
             })}
           </div>
         ))}
+        <div className="nav-group"><div className="nav-caption">SYSTEM</div><button className={`nav-item ${page === "Settings" ? "active" : ""}`} aria-label="Settings" title={sidebarCollapsed ? "Settings" : undefined} onClick={() => setPage("Settings")}><Settings2 size={18} /><span>Settings</span></button><button className={`nav-item ${page === "Activity Log" ? "active" : ""}`} aria-label="Activity Log" title={sidebarCollapsed ? "Activity Log" : undefined} onClick={() => { setPage("Activity Log"); setSearch(""); setMobileNav(false); }}><Activity size={18} /><span>Activity Log</span></button></div>
         <div className="sidebar-spacer" />
-        <div className="sidebar-assist">
-          <div className="assist-icon"><Sparkles size={17} /></div>
-          <div className="assist-title">Scholarship insights</div>
-          <p>Review applicant progress and screening outcomes in one place.</p>
-          <button onClick={() => setPage("AI Screening")}>Explore screening <ArrowRight size={14} /></button>
-        </div>
-        <div className="sidebar-bottom">
-          <div className="avatar">IB</div>
-          <div className="profile-copy"><strong>Scholarship Admin</strong><span>Local workspace</span></div>
-          <button className="icon-button" title="Settings are managed by your application"><Settings2 size={17} /></button>
-        </div>
+        <div className="municipal-tile"><strong>Investing in people, building a brighter Santa Cruz tomorrow.</strong><small>SANTA CRUZ, LAGUNA</small></div>
+        {page === "AI Screening" && <button className="screening-sidebar-support" onClick={() => setToast("Contact your LYDO system administrator for help with accounts, screening, and database support.")}><CircleHelp size={25} /><span><strong>Help &amp; Support</strong><small>Get help using the scholarship workspace.</small></span></button>}
+        <button className="account-link" onClick={() => setSidebarCollapsed(v => !v)}><PanelLeftClose size={16} /> <span>{sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}</span></button>
       </aside>
 
       {mobileNav && <button className="nav-scrim" onClick={() => setMobileNav(false)} aria-label="Close navigation" />}
@@ -572,27 +622,28 @@ export default function App() {
             <div className="breadcrumb">Workspace <span>/</span> <strong>{page}</strong></div>
           </div>
           <div className="topbar-actions">
-            <div className={`connection-pill ${bridgeOnline ? "online" : "offline"}`}>
-              <span className="connection-dot" />{bridgeOnline ? "Backend connected" : "Backend offline"}
-            </div>
-            <button className="icon-button" title="Refresh data" onClick={refresh}><RefreshCw size={17} /></button>
-            <button className="icon-button" title="Help"><CircleHelp size={18} /></button>
-            <div className="topbar-avatar">SA</div>
+            <div className="academic-year"><CalendarDays size={16} />{(page === "Interviews" || page === "Overview" || page === "AI Screening") ? new Date().toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "Asia/Manila" }) : academicYears.length ? `AY ${academicYears[0]}` : "Scholarship workspace"}</div>
+            <button className="icon-button" title="Notifications" onClick={() => setToast("Notifications are not connected. Delivery and unread counts are unavailable.")}><Bell size={17} /></button>
+            <button className="icon-button" title="Help" onClick={() => setToast("Contact your LYDO system administrator for support.")}><CircleHelp size={18} /></button>
+            <div className="topbar-avatar">{String(user.display_name || user.username).split(/\s+/).slice(0,2).map(word => word[0]).join("").toUpperCase()}</div><span className="session-label">{user.display_name || user.username}<small>{user.role === "ADMIN" ? "Admin" : "LYDO Official"} ? {bridgeOnline ? "Backend connected" : "Backend offline"}</small></span><button className="button-secondary" onClick={() => void signOut().catch(() => undefined)}>Sign out</button>
           </div>
         </header>
 
         <div className="page-content">
-          <div className="page-heading">
+          <div className={`page-heading ${page === "Settings" ? "settings-page-heading" : ""}`}>
             <div>
               <div className="eyebrow">SCHOLARSHIP MANAGEMENT</div>
-              <h1>{page === "Overview" ? "Good day, Admin" : page}</h1>
-              <p>{page === "Overview" ? "Live records from your local scholarship database." : pageDescription(page)}</p>
+              <h1>{page === "Overview" ? "Scholarship overview" : page === "Decisions" ? "Scholarship Decisions" : page}</h1>
+              <p>{page === "Overview" ? "A clear view of applications, reviews, and official decisions." : pageDescription(page)}</p>
             </div>
+            {page === "Overview" && <section className="overview-reference-hero"><div><h2>Fair opportunities.<br />A brighter Santa Cruz.</h2><p>Local Youth Development Office &middot; Santa Cruz, Laguna</p></div></section>}
+
             <div className="heading-actions">
               <div className="date-chip"><CalendarClock size={16} />{new Date().toLocaleDateString("en-PH", { month: "short", day: "numeric", year: "numeric" })}</div>
-              {page === "Applicants" && <button className="primary-button" onClick={openRegistration}><UserRoundPlus size={17} /> Register applicant</button>}
-              {page === "Applications" && <button className="primary-button" onClick={openRegistration}><Plus size={17} /> New application</button>}
-              {page === "AI Screening" && <button className="primary-button" onClick={() => openScreening()}><BrainCircuit size={17} /> Run screening</button>}
+              {page === "Applicants" && <button className="primary-button" onClick={openRegistration}><Plus size={17} /> Register Applicant</button>}
+              {page === "Applications" && <button className="primary-button" onClick={openRegistration}><Plus size={17} /> New Application</button>}
+              {page === "AI Screening" && <button className="primary-button" disabled={loading || !applicationOptions.length || formBusy} onClick={() => { setForm({ mode: "batchScreen", title: "Run batch AI screening", subtitle: `Run and persist advisory screening for ${applicationOptions.length} existing applications? Official statuses remain unchanged. Failures will appear in the screening table.`, fields: [], initial: {} }); }}><Play size={17} />Run AI Screening</button>}
+              {page === "Interviews" && <button className="primary-button" disabled={loading || !rows.some(row => row.awaiting_schedule)} onClick={() => openSchedule()}><CalendarDays size={21} />Schedule Interview</button>}
               {page === "Decisions" && <button className="primary-button" onClick={() => openDecision()}><Plus size={17} /> Record decision</button>}
             </div>
           </div>
@@ -603,17 +654,22 @@ export default function App() {
               <div>
                 <strong>Could not load live data</strong>
                 <span>{error}</span>
-                <small>Check that MySQL is running and your project .env file is configured, then retry.</small>
+                <small>Check the Python backend first. If it is reachable, check MySQL and the project .env configuration, then retry.</small>
               </div>
               <button className="button-secondary" onClick={refresh}>Retry</button>
             </div>
           )}
 
-          {page === "Overview"
-            ? <Dashboard data={dashboard} rows={rows} loading={loading} onOpen={setPage} />
+          {page === "Settings" ? <SettingsPage user={user} onLogout={() => void signOut().catch(() => undefined)} onActivity={() => setPage("Activity Log")} /> : page === "Activity Log" ? <ActivityLogPage items={rows} loading={loading} refresh={refresh} /> : page === "Overview"
+            ? <OverviewPage data={dashboard} loading={loading} onOpen={setPage} />
+            : page === "Applicants" ? <ApplicantsPage initialSelectedId={applicantFocus} sourceRows={rows} loading={loading} search={search} setSearch={setSearch} refresh={refresh} onEdit={openApplicantEdit} onArchive={archiveApplicant} />
+            : page === "Applications" ? <ApplicationsPage rows={rows} loading={loading} search={search} setSearch={setSearch} refresh={refresh} onScreen={openScreening} onSchedule={openSchedule} onEdit={openApplicationEdit} onStatus={openStatus} onProfile={applicantId => { setApplicantFocus(applicantId); setSearch(""); setPage("Applicants"); }} />
+            : page === "AI Screening" ? <ScreeningPage latestBatch={latestBatch} applications={allApplications} results={rows} failures={screeningFailures} loading={loading} search={search} setSearch={setSearch} refresh={refresh} onScreen={openScreening} onSchedule={openSchedule} onReviewStage={openStatus} onEndorse={openEndorsement} />
+            : page === "Interviews" ? <InterviewsPage rows={rows} applications={allApplications} loading={loading} onSchedule={openSchedule} onResult={openInterviewResult} />
+            : page === "Decisions" ? <DecisionsPage decisions={rows} applications={allApplications} loading={loading} refresh={refresh} onDecision={openDecision} />
             : <DataPage
                 page={page}
-                rows={filtered}
+                rows={rows}
                 loading={loading}
                 search={search}
                 setSearch={setSearch}
@@ -644,115 +700,15 @@ export default function App() {
 
 function pageDescription(page: PageKey) {
   return ({
+    "Activity Log": "Review who processed each record, what changed, and when.",
+    Settings: "Your account, preferences, and workspace.",
     Overview: "A quick look at your scholarship program.",
-    Applicants: "Manage applicant profiles, contact information, and archive status.",
-    Applications: "Track applications, eligibility details, and workflow status.",
-    "AI Screening": "Run and review saved AI-assisted screening recommendations.",
-    Interviews: "Schedule interviews and record their official results.",
+    Applicants: "Manage applicant identity records, contact details, and household information.",
+    Applications: "Track every submission from initial screening to the official scholarship decision.",
+    "AI Screening": "Review model recommendations alongside verified records and professional judgment.",
+    Interviews: "Schedule and manage applicant interviews for all scholarship programs. Coordinate with panel members and track interview status and results.",
     Decisions: "Record and review final scholarship decisions.",
   } as Record<PageKey, string>)[page];
-}
-
-function Dashboard({ data, rows, loading, onOpen }: { data: Row | null; rows: Row[]; loading: boolean; onOpen: (p: PageKey) => void }) {
-  const stats = data?.stats || {};
-  const counts: Record<string, number> = data?.statusCounts || {};
-  const maxCount = Math.max(1, ...Object.values(counts).map(Number));
-
-  const cards = [
-    { label: "Total applicants", value: stats.applicants ?? "—", note: "Active applicant profiles", icon: Users, tone: "blue" },
-    { label: "Applications", value: stats.applications ?? "—", note: "Active scholarship records", icon: FileText, tone: "violet" },
-    { label: "Pending review", value: stats.pending ?? "—", note: "Applications needing attention", icon: Clock3, tone: "amber" },
-    { label: "Approved scholars", value: stats.approved ?? "—", note: "Recorded approval decisions", icon: Award, tone: "green" },
-  ];
-
-  return (
-    <>
-      <section className="welcome-banner">
-        <div className="welcome-content">
-          <div className="welcome-tag"><Sparkles size={14} /> LOCAL SCHOLARSHIP WORKSPACE</div>
-          <h2>Every opportunity starts<br />with a fair review.</h2>
-          <p>Manage applicants, monitor screening recommendations, and keep every scholarship decision documented.</p>
-          <button className="welcome-button" onClick={() => onOpen("Applications")}>View applications <ArrowRight size={16} /></button>
-        </div>
-        <div className="welcome-art">
-          <div className="art-ring ring-one" />
-          <div className="art-ring ring-two" />
-          <div className="art-card">
-            <div className="art-card-top"><div className="art-cap"><GraduationCap size={25} /></div><span>STUDENT SUCCESS</span></div>
-            <div className="art-line long" />
-            <div className="art-line medium" />
-            <div className="art-card-bottom">
-              <div>
-                <small>Review progress</small>
-                <strong>{stats.applications ? Math.round((Number(stats.approved || 0) / Math.max(1, Number(stats.applications))) * 100) : 0}%</strong>
-              </div>
-              <div className="mini-bars"><i /><i /><i /><i /><i /><i /><i /></div>
-            </div>
-          </div>
-          <div className="welcome-orb orb-one" />
-          <div className="welcome-orb orb-two" />
-        </div>
-      </section>
-
-      <section className="stats-grid">
-        {cards.map(c => {
-          const Icon = c.icon;
-          return (
-            <div className="stat-card" key={c.label}>
-              <div className="stat-top"><span className="stat-label">{c.label}</span><span className={`stat-icon ${c.tone}`}><Icon size={18} /></span></div>
-              <div className="stat-value">{loading ? <span className="skeleton">&nbsp;</span> : c.value}</div>
-              <div className="stat-foot"><span className="stat-note">{c.note}</span><span className="stat-arrow"><ArrowRight size={14} /></span></div>
-            </div>
-          );
-        })}
-      </section>
-
-      <section className="dashboard-lower">
-        <div className="panel status-panel">
-          <div className="panel-heading">
-            <div><h3>Application status</h3><p>Distribution across current statuses</p></div>
-            <div className="panel-icon"><Activity size={18} /></div>
-          </div>
-          {loading ? <LoadingRows /> : Object.keys(counts).length ? (
-            <div className="status-list">
-              {Object.entries(counts).sort((a, b) => Number(b[1]) - Number(a[1])).slice(0, 7).map(([label, value]) => (
-                <div className="status-row" key={label}>
-                  <div className="status-label"><span className={`legend-dot ${statusTone(label)}`} /><span>{nice(label)}</span><b>{Number(value)}</b></div>
-                  <div className="progress-track"><div className={`progress-fill ${statusTone(label)}`} style={{ width: `${Number(value) / maxCount * 100}%` }} /></div>
-                </div>
-              ))}
-            </div>
-          ) : <EmptyState title="No application data yet" text="Application status counts will appear once records are available." />}
-          <button className="panel-link" onClick={() => onOpen("Applications")}>Explore applications <ArrowRight size={15} /></button>
-        </div>
-
-        <div className="panel recent-panel">
-          <div className="panel-heading">
-            <div><h3>Recent applications</h3><p>Latest activity in your program</p></div>
-            <button className="icon-button small" onClick={() => onOpen("Applications")} title="View all"><ArrowRight size={17} /></button>
-          </div>
-          {loading ? <LoadingRows /> : rows.length ? (
-            <div className="recent-list">
-              {rows.slice(0, 5).map((r, i) => (
-                <div className="recent-item" key={r.application_id ?? i}>
-                  <div className={`recent-avatar color-${i % 5}`}>{nameOf(r).split(/\s+/).slice(0, 2).map((x: string) => x[0]).join("").toUpperCase()}</div>
-                  <div className="recent-main"><strong>{nameOf(r)}</strong><span>{r.scholarship_program || `Application #${r.application_id ?? "—"}`}</span></div>
-                  <div className="recent-right"><span className={`status-badge ${statusTone(r.status)}`}>{nice(r.status)}</span><small>{dateText(r.created_at)}</small></div>
-                </div>
-              ))}
-            </div>
-          ) : <EmptyState title="Nothing to show yet" text="New application records will appear here." />}
-          <button className="panel-link" onClick={() => onOpen("Applications")}>View all applications <ArrowRight size={15} /></button>
-        </div>
-      </section>
-
-      <section className="tip-banner">
-        <div className="tip-icon"><BookOpenCheck size={20} /></div>
-        <div><strong>Keep every decision transparent</strong><p>Use screening results as decision support, and review each applicant’s full context before making a final scholarship decision.</p></div>
-        <button onClick={() => onOpen("AI Screening")}>Review screening <ArrowRight size={15} /></button>
-      </section>
-    </>
-  );
 }
 
 function DataPage(props: {
@@ -772,9 +728,24 @@ function DataPage(props: {
   onInterviewResult: (r: Row) => void;
   onDecision: (r?: Row) => void;
 }) {
-  const { page, rows, loading, search, setSearch, refresh, onApplicantEdit, onApplicantArchive, onApplicationEdit, onStatus, onScreen, onSchedule, onInterviewResult } = props;
+  const { page, rows: sourceRows, loading, search, setSearch, refresh, onApplicantEdit, onApplicantArchive, onApplicationEdit, onStatus, onScreen, onSchedule, onInterviewResult } = props;
+
+  const [selected, setSelected] = useState<Row | null>(null);
+  const [filter, setFilter] = useState("");
+  const [program, setProgram] = useState("");
+  const [year, setYear] = useState("");
+  const [currentPage, setCurrentPage] = useState(1);
+  useEffect(() => { setSelected(null); setFilter(""); setProgram(""); setYear(""); setCurrentPage(1); }, [page]);
+  useEffect(() => { setCurrentPage(1); }, [search, filter, program, year]);
+  const filterKey = page === "Applicants" ? "barangay" : page === "AI Screening" ? "predicted_class" : page === "Decisions" ? "decision" : "status";
+  const matches = sourceRows.filter(r => JSON.stringify(r).toLowerCase().includes(search.toLowerCase()) && (!filter || String(r[filterKey]) === filter) && (!program || String(r.scholarship_program) === program) && (!year || String(r.scholarship_year) === year));
+  const pages = Math.max(1, Math.ceil(matches.length / 8));
+  const rows = matches.slice((Math.min(currentPage, pages) - 1) * 8, Math.min(currentPage, pages) * 8);
+  const options = (key: string) => [...new Set(sourceRows.map(r => r[key]).filter(v => v != null && v !== "").map(String))].sort();
 
   const columns: Record<PageKey, { key: string; label: string }[]> = {
+    "Activity Log": [],
+    Settings: [],
     Overview: [],
     Applicants: [
       { key: "applicant_id", label: "ID" }, { key: "name", label: "Applicant name" },
@@ -790,7 +761,7 @@ function DataPage(props: {
     "AI Screening": [
       { key: "application_id", label: "Application" }, { key: "applicant_name", label: "Applicant" },
       { key: "scholarship_program", label: "Program" }, { key: "predicted_class", label: "Screening outcome" },
-      { key: "confidence_score", label: "Confidence" }, { key: "screened_at", label: "Screened at" },
+      { key: "screened_at", label: "Screened at" },
     ],
     Interviews: [
       { key: "reference_no", label: "Reference" }, { key: "applicant_name", label: "Applicant" },
@@ -804,6 +775,9 @@ function DataPage(props: {
     ],
   };
 
+  const totalApplications = new Set(sourceRows.map(r => r.application_id).filter(Boolean)).size;
+  const metrics = page === "Applicants" ? [["Directory records", sourceRows.length], ["Active profiles", sourceRows.length], ["Barangays", options("barangay").length], ["Archive history", "Unavailable"]] : page === "AI Screening" ? [["Screened applications", totalApplications], ["Saved results", sourceRows.length], ["Model authority", "Advisory"], ["Review notes", "Not connected"]] : page === "Interviews" ? [["Awaiting schedule", sourceRows.filter(r => r.awaiting_schedule).length], ["Scheduled", sourceRows.filter(r => r.status === "SCHEDULED").length], ["Completed", sourceRows.filter(r => r.status === "COMPLETED").length], ["Rescheduling", "Not connected"]] : page === "Decisions" ? [["Recorded decisions", sourceRows.length], ["Approved", sourceRows.filter(r => r.decision === "APPROVED").length], ["Rejected", sourceRows.filter(r => r.decision === "REJECTED").length], ["Authorization", "Not connected"]] : [["All applications", sourceRows.length], ["Under review", sourceRows.filter(r => r.status === "UNDER_REVIEW").length], ["For interview", sourceRows.filter(r => r.status === "FOR_INTERVIEW").length], ["Final decisions", sourceRows.filter(r => ["APPROVED", "REJECTED"].includes(r.status)).length]];
+
   const cols = columns[page] || [];
   const intro = page === "AI Screening"
     ? "Recorded predictions are advisory and must be reviewed by an authorized official."
@@ -812,7 +786,7 @@ function DataPage(props: {
       : "Live records read from your existing scholarship database.";
 
   return (
-    <section className="panel data-panel">
+    <><section className="stats-grid record-metrics">{metrics.map(([label, value]) => <div className="stat-card" key={label}><span className="stat-icon blue"><FileText size={18} /></span><div className="stat-label">{label}</div><div className={typeof value === "number" ? "stat-value" : "stat-unavailable"}>{loading ? "—" : value}</div></div>)}</section><div className={`records-layout ${selected ? "has-detail" : ""}`}><section className="panel data-panel">
       <div className="data-toolbar">
         <div><h3>{page === "AI Screening" ? "Screening history" : `${page} records`}</h3><p>{intro}</p></div>
         <div className="toolbar-actions">
@@ -821,18 +795,21 @@ function DataPage(props: {
         </div>
       </div>
 
+      <div className="filter-bar"><select aria-label="Filter records" value={filter} onChange={e => setFilter(e.target.value)}><option value="">{page === "Applicants" ? "All barangays" : "All statuses / recommendations"}</option>{options(filterKey).map(v => <option key={v} value={v}>{nice(v)}</option>)}</select>{page !== "Applicants" && <><select aria-label="Program" value={program} onChange={e => setProgram(e.target.value)}><option value="">All programs</option>{options("scholarship_program").map(v => <option key={v}>{v}</option>)}</select><select aria-label="Scholarship year" value={year} onChange={e => setYear(e.target.value)}><option value="">All years</option>{options("scholarship_year").map(v => <option key={v}>{v}</option>)}</select></>}</div>
+      {page === "Decisions" && <div className="notice"><ShieldCheck size={17} />Official decisions are read-only. Verified staff authorization is not connected.</div>}
       {page === "AI Screening" && <div className="notice"><Sparkles size={17} /><span>Run a screening to evaluate an existing application with the saved model. Results are persisted and remain advisory, not a final award/rejection.</span></div>}
 
+      {page === "Interviews" && <div className="notice">Existing workflow requires the For Interview stage before scheduling. Rescheduling and panel conflict validation are not connected.</div>}
       {loading ? <div className="table-loading"><LoaderCircle className="spin" size={24} /><span>Loading records…</span></div> : rows.length ? (
-        <div className="table-scroll">
+        <div>{(page === "Interviews" ? [{ title: "Applications for interview scheduling", items: rows.filter(r => r.awaiting_schedule) }, { title: "Scheduled interviews", items: rows.filter(r => !r.awaiting_schedule) }] : [{ title: "", items: rows }]).map(group => <section className="table-group" key={group.title}>{group.title && <h3>{group.title}</h3>}<div className="table-scroll">
           <table>
             <thead><tr>{cols.map(c => <th key={c.key}>{c.label}</th>)}<th>Actions</th></tr></thead>
             <tbody>
-              {rows.map((r, i) => (
-                <tr key={r.applicant_id ?? r.application_id ?? r.interview_id ?? r.decision_id ?? r.screening_id ?? i}>
+              {group.items.map((r, i) => (
+                <tr key={r.screening_id ?? r.interview_id ?? r.decision_id ?? r.application_id ?? r.applicant_id ?? i}>
                   {cols.map(c => <td key={c.key}>{renderCell(r, c.key, page)}</td>)}
                   <td>
-                    <div className="row-actions">
+                    <div className="row-actions"><button className="row-action" onClick={() => setSelected(r)}>View</button>
                       {page === "Applicants" && <>
                         <button className="row-action" title="Edit applicant" onClick={() => onApplicantEdit(r)}><Pencil size={14} /> Edit</button>
                         <button className="row-action danger" title="Archive applicant" onClick={() => onApplicantArchive(r)}><Archive size={14} /> Archive</button>
@@ -856,15 +833,15 @@ function DataPage(props: {
                 </tr>
               ))}
             </tbody>
-          </table>
-        </div>
+          </table>{!group.items.length && <p className="group-empty">No records on this page.</p>}
+        </div></section>)}</div>
       ) : <EmptyState title={search ? "No matching records" : `No ${page.toLowerCase()} found`} text={search ? "Try another search term." : "No matching records are currently available in the database."} />}
 
       <div className="table-footer">
-        <span>Showing <b>{rows.length}</b> record{rows.length === 1 ? "" : "s"}{search ? " matching your search" : ""}</span>
-        <span>Source: existing MySQL records</span>
+        <span>Showing <b>{rows.length}</b> of {matches.length} record{rows.length === 1 ? "" : "s"}{search ? " matching your search" : ""}</span>
+        <span className="pagination"><button disabled={currentPage <= 1} onClick={() => setCurrentPage(n => n - 1)}>Previous</button><b>{Math.min(currentPage, pages)} / {pages}</b><button disabled={currentPage >= pages} onClick={() => setCurrentPage(n => n + 1)}>Next</button></span>
       </div>
-    </section>
+    </section>{selected && <RecordDetail row={selected} page={page} onClose={() => setSelected(null)} />}</div></>
   );
 }
 
@@ -878,6 +855,7 @@ function renderCell(row: Row, key: string, _page: PageKey) {
     );
   }
 
+  if (key === "predicted_class") return <span className="model-output">{modelLabel(row)}</span>;
   if (key === "status" || key === "decision" || key === "result" || key === "predicted_class") {
     return <span className={`status-badge ${statusTone(row[key])}`}>{nice(row[key])}</span>;
   }
@@ -1087,7 +1065,7 @@ function FormModal({ form, busy, onClose, onSubmit }: {
           </button>
           <button className="primary-button" disabled={busy}>
             {busy ? <LoaderCircle size={16} className="spin" /> : null}
-            {busy ? "Saving…" : wizard && step < grouped.length - 1 ? "Next" : "Save applicant"}
+            {busy ? "Saving…" : wizard && step < grouped.length - 1 ? "Next" : form.mode === "status" ? "Save status" : "Save applicant"}
           </button>
         </div>
 
@@ -1103,4 +1081,20 @@ function LoadingRows() {
 
 function EmptyState({ title, text }: { title: string; text: string }) {
   return <div className="empty-state"><div className="empty-icon"><FileText size={22} /></div><strong>{title}</strong><p>{text}</p></div>;
+}
+
+function OfficialLogos() { return <div className="official-logos"><img src="/assets/stc.png" alt="Bayan ng Santa Cruz" /><img src="/assets/lydo.png" alt="Local Youth Development Office Santa Cruz Laguna" /></div>; }
+function modelLabel(row: Row) {
+  let details: Row = {};
+  try { details = typeof row.explanation === "string" ? JSON.parse(row.explanation) : row.explanation || {}; } catch { /* Legacy record */ }
+  const value = String(details.model_prediction ?? "").toLowerCase();
+  if (["1", "qualified"].includes(value)) return "Model predicts qualified";
+  if (["0", "not qualified", "not_qualified"].includes(value)) return "Model predicts not qualified";
+  return row.predicted_class ? `Advisory: ${nice(row.predicted_class)}` : "Recommendation unavailable";
+}
+function RecordDetail({ row, page, onClose }: { row: Row; page: PageKey; onClose: () => void }) {
+  const [tab, setTab] = useState("Overview");
+  useEffect(() => setTab("Overview"), [row, page]);
+  const keys = page === "Applicants" ? ["birth_date", "sex", "house_no_street", "barangay", "municipality", "province", "phone", "email", "created_at"] : ["application_id", "scholarship_program", "scholarship_year", "academic_average", "status", "scheduled_at", "location", "result", "decision", "reason", "decided_at", "screened_at"];
+  return <aside className="panel record-detail"><div className="detail-head"><div><strong>{nameOf(row)}</strong><p>{page} · {row.reference_no || row.application_id || row.applicant_id}</p></div><button className="icon-button" aria-label="Close details" onClick={onClose}><X size={18} /></button></div><div className="detail-tabs">{["Overview", "References", "History"].map(t => <button className={tab === t ? "active" : ""} key={t} onClick={() => setTab(t)}>{t}</button>)}</div>{tab === "Overview" ? <><dl>{keys.filter(k => row[k] != null).map(k => <div key={k}><dt>{nice(k)}</dt><dd>{String(row[k])}</dd></div>)}</dl>{page === "AI Screening" && <div className="model-card"><small>ADVISORY MODEL OUTPUT</small><h3>{modelLabel(row)}</h3><p>Human review remains available. This result does not change the official stage.</p></div>}{page === "Applications" && <div className="application-timeline"><h4>OFFICIAL APPLICATION TIMELINE</h4>{["Submitted", "Screening", "Interview", "Official Decision"].map(t => <div key={t}><Clock3 size={16} /><span>{t}<small>{t === "Submitted" && row.submitted_at ? dateText(row.submitted_at) : "Event history unavailable"}</small></span></div>)}</div>}<div className="notice">Identity edits and model recommendations do not record an official decision.</div></> : tab === "References" ? <EmptyState title="References not connected" text="No document integration is available for this record." /> : <><h4>Recorded history</h4>{page === "AI Screening" ? <dl><div><dt>Screened at</dt><dd>{row.screened_at || "Unavailable"}</dd></div><div><dt>Saved explanation</dt><dd>{row.explanation || "Unavailable"}</dd></div></dl> : <p>Full audit history and verified decision-maker identity are not connected.</p>}</>}</aside>;
 }

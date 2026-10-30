@@ -1,0 +1,44 @@
+.screening-page { --screening-purple: #7548CD; }
+.screening-page .screening-advisory { margin-bottom: 16px; padding: 10px 12px; font-size: 11px; }
+.screening-page .applicant-directory-layout.with-profile { grid-template-columns: minmax(0, 2.6fr) minmax(350px, 1fr); }
+.screening-table { min-width: 840px; }
+.screening-table th:first-child { width: 19%; }
+.screening-table th:nth-child(2) { width: 16%; }
+.screening-table th:nth-child(3) { width: 17%; }
+.screening-table th:nth-child(4) { width: 16%; }
+.screening-table th:nth-child(5) { width: 16%; }
+.screening-table th:last-child { width: 16%; }
+.screening-page .screening-table td { padding-top: 11px!important; padding-bottom: 11px!important; }
+.screening-prediction { color: var(--screening-purple); font-weight: 500; font-size: 12px; line-height: 1.35; }
+.screening-unavailable { color: #667FA7; font-size: 12px; }
+.screening-state { font-size: 12px; font-weight: 500; }
+.screening-state.complete { color: #13835F; }
+.screening-state.error { color: #C92E4B; }
+.screening-state.pending { color: #996500; }
+.screening-state-badge { display: inline-block; padding: 4px 7px; border-radius: 5px; font-size: 11px; font-weight: 500; margin: 0 0 12px; }
+.screening-state-badge.complete { color: #13835F; background: #E8F7EF; }
+.screening-state-badge.error { color: #C92E4B; background: #FFF0F1; }
+.screening-state-badge.pending { color: #996500; background: #FFF5DB; }
+.screening-page .screening-table-footnote { color: #667FA7; font-size: 11px; margin-top: 8px; }
+.screening-profile .applicant-tabs { gap: 3px; margin-bottom: 12px; }
+.screening-profile .applicant-tabs button { padding: 8px 7px; font-size: 11px; }
+.screening-model-card { border-radius: 8px; background: #F2EDFF; padding: 14px; margin-bottom: 12px; }
+.screening-model-card>small { display: block; text-transform: uppercase; color: var(--screening-purple); font-size: 9px; }
+.screening-model-card h3 { color: var(--screening-purple); font-family: inherit; font-size: 16px; line-height: 1.3; font-weight: 700; margin: 9px 0 6px; }
+.screening-profile .screening-model-card p { color: #14264A; font-size: 11px; line-height: 1.4; }
+.screening-profile .application-overview-fields>div { grid-template-columns: 1.05fr 1fr; }
+.screening-review-notes { margin: 0 0 12px; }
+.screening-review-notes h3 { margin: 0 0 10px; color: #115DF4; font-size: 10px; font-weight: 400; text-transform: uppercase; }
+.screening-review-notes p { margin: 8px 0; font-size: 11px; line-height: 1.4; color: #14264A; }
+.screening-review-notes p:last-child { color: #667FA7; }
+.screening-profile-actions { display: flex; flex-direction: column; align-items: flex-start; gap: 9px; }
+.screening-profile-actions>.primary-button { display: inline-flex; align-items: center; gap: 8px; padding: 10px 12px; font-size: 11px; background: #115DF4; border-radius: 6px; box-shadow: none; }
+.screening-profile-actions>.button-secondary { font-size: 12px; padding: 9px 12px; }
+.screening-profile .applicant-detail-section dl+dl { border-top: 1px solid #DBE6F5; padding-top: 10px; margin-top: 10px; }
+@media (min-width: 1001px) and (max-width: 1400px) {
+  .screening-page .applicant-directory-layout.with-profile { grid-template-columns: minmax(0, 2.4fr) minmax(300px, 1fr); }
+  .screening-table { min-width: 760px; }
+}
+@media (max-width: 1000px) {
+  .screening-page .applicant-directory-layout.with-profile { grid-template-columns: minmax(0, 1fr); }
+}
