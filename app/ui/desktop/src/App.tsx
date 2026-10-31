@@ -1,6 +1,5 @@
-import LoginPage from "./LoginPage";
 import ActivityLogPage from "./ActivityLogPage";
-import { apiFetch, getSessionToken, setSessionToken } from "./api";
+import { apiFetch } from "./api";
 import OverviewPage from "./OverviewPage";
 import DecisionsPage from "./DecisionsPage";
 import SettingsPage from "./SettingsPage";
@@ -222,8 +221,6 @@ const applicationEditFields: Field[] = [
 ];
 
 export default function App() {
-  const [user, setUser] = useState<Row | null>(null);
-  const [sessionLoading, setSessionLoading] = useState(true);
   const [page, setPage] = useState<PageKey>(initialPage);
   const [mobileNav, setMobileNav] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
@@ -319,26 +316,8 @@ export default function App() {
     }
   }, [page, refreshKey]);
 
-  useEffect(() => {
-    const expired = () => { setUser(null); setRows([]); setDashboard(null); setAllApplications([]); setForm(null); };
-    window.addEventListener("iskolar-session-expired", expired);
-    if (getSessionToken()) {
-      request<{ user: Row }>("/auth/me").then(result => setUser(result.user)).catch(() => { setSessionToken(null); setUser(null); }).finally(() => setSessionLoading(false));
-    } else setSessionLoading(false);
-    return () => window.removeEventListener("iskolar-session-expired", expired);
-  }, []);
-  useEffect(() => { if (user) void load(); }, [load, user]);
+  useEffect(() => { void load(); }, [load]);
   useEffect(() => { window.scrollTo({ top: 0, behavior: "auto" }); }, [page]);
-  async function signIn(username: string, password: string) {
-    const result = await post("/auth/login", { username, password });
-    setSessionToken(result.token);
-    setUser(result.user);
-    setPage(initialPage);
-  }
-  async function signOut() {
-    try { await post("/auth/logout", {}); }
-    finally { setSessionToken(null); setUser(null); setRows([]); setDashboard(null); setAllApplications([]); setForm(null); }
-  }
   useEffect(() => {
     if (!toast) return;
     const id = window.setTimeout(() => setToast(""), 4500);
@@ -471,7 +450,7 @@ export default function App() {
   }
 
   function openDecision(row?: Row) {
-    setForm({ mode: "decision", title: "Record official decision", subtitle: "Confirm a human decision after reviewing the application and interview. Your signed-in identity and the server timestamp will be recorded in Activity Log.", fields: [
+    setForm({ mode: "decision", title: "Record official decision", subtitle: "Confirm a human decision after reviewing the application and interview. Login is disabled; this action will not be attributed to an individual staff account.", fields: [
       { key: "application_id", label: "Application", type: "select", required: true, options: applicationOptions },
       { key: "decision", label: "Official decision", type: "select", required: true, options: ["APPROVED", "REJECTED", "WAITLISTED"].map(value => ({ value, label: nice(value) })) },
       { key: "reason", label: "Required decision remarks", type: "textarea", required: true },
@@ -577,8 +556,6 @@ export default function App() {
     }
   }
 
-  if (sessionLoading) return <main className="table-loading"><LoaderCircle className="spin" size={24} />Checking staff session...</main>;
-  if (!user) return <LoginPage onLogin={signIn} />;
 
   return (
     <div className={`app-shell ${page === "Overview" || page === "Applicants" || page === "Applications" || page === "AI Screening" || page === "Interviews" ? "overview-shell" : ""} ${page === "Applicants" || page === "Applications" || page === "AI Screening" || page === "Interviews" ? "applicants-shell" : ""} ${page === "Interviews" || page === "Overview" || page === "AI Screening" ? "interviews-shell" : ""} ${page === "Overview" ? "reference-overview-shell" : ""} ${page === "AI Screening" ? "screening-reference-shell" : ""} ${sidebarCollapsed ? "sidebar-collapsed" : ""}`}>
@@ -625,7 +602,7 @@ export default function App() {
             <div className="academic-year"><CalendarDays size={16} />{(page === "Interviews" || page === "Overview" || page === "AI Screening") ? new Date().toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "Asia/Manila" }) : academicYears.length ? `AY ${academicYears[0]}` : "Scholarship workspace"}</div>
             <button className="icon-button" title="Notifications" onClick={() => setToast("Notifications are not connected. Delivery and unread counts are unavailable.")}><Bell size={17} /></button>
             <button className="icon-button" title="Help" onClick={() => setToast("Contact your LYDO system administrator for support.")}><CircleHelp size={18} /></button>
-            <div className="topbar-avatar">{String(user.display_name || user.username).split(/\s+/).slice(0,2).map(word => word[0]).join("").toUpperCase()}</div><span className="session-label">{user.display_name || user.username}<small>{user.role === "ADMIN" ? "Admin" : "LYDO Official"} ? {bridgeOnline ? "Backend connected" : "Backend offline"}</small></span><button className="button-secondary" onClick={() => void signOut().catch(() => undefined)}>Sign out</button>
+            <div className="topbar-avatar"><UserRound size={18} /></div><span className="session-label">Local workspace<small>{bridgeOnline ? "Backend connected" : "Backend offline"}</small></span>
           </div>
         </header>
 
@@ -660,7 +637,7 @@ export default function App() {
             </div>
           )}
 
-          {page === "Settings" ? <SettingsPage user={user} onLogout={() => void signOut().catch(() => undefined)} onActivity={() => setPage("Activity Log")} /> : page === "Activity Log" ? <ActivityLogPage items={rows} loading={loading} refresh={refresh} /> : page === "Overview"
+          {page === "Settings" ? <SettingsPage onActivity={() => setPage("Activity Log")} /> : page === "Activity Log" ? <ActivityLogPage items={rows} loading={loading} refresh={refresh} /> : page === "Overview"
             ? <OverviewPage data={dashboard} loading={loading} onOpen={setPage} />
             : page === "Applicants" ? <ApplicantsPage initialSelectedId={applicantFocus} sourceRows={rows} loading={loading} search={search} setSearch={setSearch} refresh={refresh} onEdit={openApplicantEdit} onArchive={archiveApplicant} />
             : page === "Applications" ? <ApplicationsPage rows={rows} loading={loading} search={search} setSearch={setSearch} refresh={refresh} onScreen={openScreening} onSchedule={openSchedule} onEdit={openApplicationEdit} onStatus={openStatus} onProfile={applicantId => { setApplicantFocus(applicantId); setSearch(""); setPage("Applicants"); }} />

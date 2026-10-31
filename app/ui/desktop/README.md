@@ -92,3 +92,7 @@ The launcher now prefers the project's `.venv/Scripts/python.exe` on Windows (`.
 After changing launcher Rust code, rebuild/restart with `npm.cmd run tauri dev` from `app/ui/desktop`; refreshing the web UI alone does not update an already-running executable. An installed release also needs a rebuilt installer. Keep MySQL running and preserve the project-root `.env`. This is still a source-checkout launcher; standalone redistribution requires packaging Python and the project resources, as noted above.
 
 Verified during the startup repair: local `/api/health` responded successfully and `/api/dashboard` completed a live MySQL read. Frontend production build and all 10 targeted backend regression checks passed.
+
+## Local workspace without login
+
+The desktop app opens directly to the workspace. Login, logout and staff session checks are disabled, and the loopback bridge accepts workspace requests without a staff token. Staff setup is not required. Existing audit history remains readable, but new actions are not attributed to staff or written to the staff activity log. Screening uses no staff user ID. Core repositories, services and database schema are unchanged by this login removal. Restart the desktop app/Python bridge after updating.

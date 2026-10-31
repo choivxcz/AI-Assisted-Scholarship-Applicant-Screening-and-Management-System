@@ -32,8 +32,7 @@ from app.repositories.screening_result_repository import ScreeningResultReposito
 from app.services.application_service import ApplicationService
 from app.services.screening_persistence_service import ScreeningPersistenceService
 from database.connection import get_connection
-from app.ui.desktop import staff_auth, activity_store
-from functools import wraps
+from app.ui.desktop import activity_store
 
 
 HOST, PORT = "127.0.0.1", 8765
@@ -251,55 +250,6 @@ def application_screening_inputs(app):
     }
 
 
-def staff_access(method):
-    """Verify individual identity and reserve audit entries before workspace writes."""
-    @wraps(method)
-    def protected(self):
-        path = urlparse(self.path).path.rstrip("/") or "/"
-        self._activity_id = None
-        if method.__name__ == "do_GET" and path == "/api/health":
-            return method(self)
-        if path == "/api/auth/requests":
-            return self._send(410, {"error": "Staff sign-up is disabled. Use a preconfigured individual account."})
-        if method.__name__ == "do_POST" and path == "/api/auth/login":
-            return method(self)
-        try:
-            self.user = staff_auth.require_user(getattr(self, "headers", {}))
-            if method.__name__ in {"do_POST", "do_PUT", "do_DELETE"}:
-                data = self._body() if method.__name__ != "do_DELETE" else {}
-                self._parsed_body = data
-                parts = path.removeprefix("/api/").split("/")
-                entity_type = {"register": "application", "applicants": "applicant", "applications": "application", "screening": "screening", "interviews": "interview", "decisions": "decision", "auth": "session"}.get(parts[0], "workspace")
-                entity_id = None
-                if len(parts) > 1 and parts[1].isdigit():
-                    entity_id = int(parts[1])
-                action = {
-                    ("do_POST", "register"): "REGISTER_APPLICANT_AND_APPLICATION",
-                    ("do_POST", "screening"): "SCREEN_APPLICATION",
-                    ("do_POST", "decisions"): "RECORD_OFFICIAL_DECISION",
-                    ("do_POST", "interviews"): "SCHEDULE_INTERVIEW" if len(parts) == 1 else "RECORD_INTERVIEW_RESULT",
-                    ("do_POST", "auth"): "SIGN_OUT",
-                    ("do_PUT", "applicants"): "EDIT_APPLICANT",
-                    ("do_PUT", "applications"): "CHANGE_APPLICATION_STATUS" if "status" in data else "EDIT_APPLICATION",
-                    ("do_DELETE", "applicants"): "ARCHIVE_APPLICANT",
-                }.get((method.__name__, parts[0]), "WORKSPACE_REQUEST")
-                details = {"fields": sorted(key for key in data if key not in {"password", "token", "actor", "user_id", "role"}), "http_method": method.__name__.removeprefix("do_")}
-                for key in ("status", "decision", "result"):
-                    if key in data:
-                        details["new_status" if key == "status" else key] = str(data[key])[:100]
-                if str(data.get("application_id", "")).isdigit():
-                    details["application_id"] = int(data["application_id"])
-                if entity_type == "application" and entity_id and method.__name__ == "do_PUT":
-                    current = ApplicationRepository.get_by_id(entity_id)
-                    if current:
-                        details["previous_status"] = current.get("status")
-                self._activity_id = activity_store.begin_activity(self.user, action, entity_type, entity_id, details)
-            return method(self)
-        except staff_auth.AccessError as exc:
-            return self._send(exc.status, {"error": str(exc)})
-        except Exception as exc:
-            return self._error(exc)
-    return protected
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -310,23 +260,6 @@ class Handler(BaseHTTPRequestHandler):
         print(f"[bridge] {self.address_string()} - {fmt % args}")
 
     def _send(self, status, payload):
-        activity_id = getattr(self, "_activity_id", None)
-        if activity_id is not None:
-            self._activity_id = None
-            entity_id = None
-            if isinstance(payload, dict):
-                for key in ("decision_id", "interview_id", "application_id", "applicant_id"):
-                    if isinstance(payload.get(key), int):
-                        entity_id = payload[key]
-                        break
-                result = payload.get("result")
-                if isinstance(result, dict) and isinstance(result.get("screening_id"), int):
-                    entity_id = result["screening_id"]
-            try:
-                activity_store.finish_activity(activity_id, status < 400, entity_id=entity_id, http_status=status)
-            except Exception:
-                print(f"[bridge] Could not finalize activity {activity_id}", flush=True)
-                status, payload = 503, {"error": "The operation may already be saved, but its activity entry could not be finalized. Check Activity Log before retrying."}
         """Send a JSON response after normalizing database values."""
         try:
             body = json.dumps(
@@ -404,7 +337,6 @@ class Handler(BaseHTTPRequestHandler):
     def do_OPTIONS(self):
         return self._send(200, {"ok": True})
 
-    @staff_access
     def do_GET(self):
         path = urlparse(self.path).path.rstrip("/") or "/"
 
@@ -416,7 +348,7 @@ class Handler(BaseHTTPRequestHandler):
                 )
 
             if path == "/api/auth/me":
-                return self._send(200, {"user": self.user})
+                return self._send(503, {"error": "Staff login is disabled for this local workspace."})
             if path == "/api/activity":
                 return self._send(200, {"items": activity_store.list_activity()})
 
@@ -519,28 +451,14 @@ class Handler(BaseHTTPRequestHandler):
         except Exception as exc:
             return self._error(exc)
 
-    @staff_access
     def do_POST(self):
         path = urlparse(self.path).path.rstrip("/") or "/"
 
         try:
             data = self._body()
 
-            if path == "/api/auth/login":
-                try:
-                    session = staff_auth.authenticate(data.get("username", ""), data.get("password", ""))
-                    try:
-                        entry = activity_store.begin_activity(session["user"], "SIGN_IN", "session")
-                        activity_store.finish_activity(entry, True, http_status=200)
-                    except Exception:
-                        staff_auth.logout({"Authorization": "Bearer " + session["token"]})
-                        raise
-                    return self._send(200, session)
-                except staff_auth.AccessError as exc:
-                    return self._send(exc.status, {"error": str(exc)})
-            if path == "/api/auth/logout":
-                staff_auth.logout(self.headers)
-                return self._send(200, {"ok": True})
+            if path.startswith("/api/auth/"):
+                return self._send(503, {"error": "Staff login is disabled. No account or request is created."})
 
             if path == "/api/register":
                 applicant = data.get("applicant") or {}
@@ -579,7 +497,7 @@ class Handler(BaseHTTPRequestHandler):
                 result = read_screening_service().screen_application(
                     application_id,
                     application_screening_inputs(application),
-                    screened_by=self.user["user_id"],
+                    screened_by=None,
                 )
 
                 return self._send(201, {"ok": True, "result": result})
@@ -658,7 +576,6 @@ class Handler(BaseHTTPRequestHandler):
         except Exception as exc:
             return self._error(exc)
 
-    @staff_access
     def do_PUT(self):
         path = urlparse(self.path).path.rstrip("/")
 
@@ -825,7 +742,6 @@ class Handler(BaseHTTPRequestHandler):
         except Exception as exc:
             return self._error(exc)
 
-    @staff_access
     def do_DELETE(self):
         path = urlparse(self.path).path.rstrip("/")
 
